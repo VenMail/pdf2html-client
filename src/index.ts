@@ -1,0 +1,249 @@
+import type {
+  PDF2HTMLConfig,
+  HTMLOutput,
+  ConversionProgress,
+  ProgressCallback
+} from './types/index.js';
+import type { OCRResult } from './types/ocr.js';
+import { PDFParser } from './core/pdf-parser.js';
+import { OCRProcessor } from './ocr/ocr-processor.js';
+import { FontDetector } from './fonts/font-detector.js';
+import { FontMapper } from './fonts/font-mapper.js';
+import { HTMLGenerator } from './html/html-generator.js';
+
+export class PDF2HTML {
+  private config: PDF2HTMLConfig;
+  private parser: PDFParser;
+  private ocrEngine: any = null; // Lazy loaded
+  private ocrProcessor: any = null; // Lazy loaded
+  private fontDetector: FontDetector;
+  private fontMapper: FontMapper | null = null;
+  private htmlGenerator: HTMLGenerator;
+
+  constructor(config: PDF2HTMLConfig = {
+    enableOCR: false,
+    enableFontMapping: false
+  }) {
+    this.config = {
+      maxConcurrentPages: 4,
+      cacheEnabled: true,
+      ...config
+    };
+
+    // Set default HTML options if not provided
+    if (!this.config.htmlOptions) {
+      this.config.htmlOptions = {
+        format: 'html+inline-css',
+        preserveLayout: true,
+        responsive: true,
+        darkMode: false,
+        imageFormat: 'base64'
+      };
+    }
+
+    this.parser = new PDFParser('auto');
+    this.fontDetector = new FontDetector();
+
+    if (this.config.enableFontMapping) {
+      // Get API key from environment or config
+      const apiKey = typeof process !== 'undefined' && process.env?.GOOGLE_API_KEY
+        ? process.env.GOOGLE_API_KEY
+        : typeof window !== 'undefined' && (window as any).__GOOGLE_API_KEY__
+          ? (window as any).__GOOGLE_API_KEY__
+          : undefined;
+      
+      this.fontMapper = new FontMapper(this.config.fontMappingOptions, apiKey);
+    }
+
+    this.htmlGenerator = new HTMLGenerator(
+      this.config.htmlOptions || {},
+      this.config.cssOptions
+    );
+  }
+
+  async convert(
+    pdfData: ArrayBuffer | File,
+    progressCallback?: ProgressCallback
+  ): Promise<HTMLOutput> {
+    const startTime = Date.now();
+
+    this.reportProgress(progressCallback, {
+      stage: 'parsing',
+      progress: 0,
+      message: 'Parsing PDF document...'
+    });
+
+    // Convert File to ArrayBuffer if needed
+    const arrayBuffer = pdfData instanceof File
+      ? await pdfData.arrayBuffer()
+      : pdfData;
+
+    // Parse PDF
+    const document = await this.parser.parse(
+      arrayBuffer,
+      this.config.parserOptions || {
+        extractText: true,
+        extractImages: true,
+        extractGraphics: true,
+        extractForms: false,
+        extractAnnotations: false
+      }
+    );
+
+    this.reportProgress(progressCallback, {
+      stage: 'parsing',
+      progress: 100,
+      totalPages: document.pageCount,
+      message: `Parsed ${document.pageCount} pages`
+    });
+
+    // Detect if this is a scanned PDF (no text but has images)
+    const { ScannedPDFDetector } = await import('./core/scanned-pdf-detector.js');
+    const detector = new ScannedPDFDetector();
+    const scanAnalysis = detector.analyze(document);
+
+    // Process OCR only if:
+    // 1. OCR is enabled
+    // 2. PDF is detected as scanned (little text but has images)
+    let ocrResults = null;
+    if (this.config.enableOCR && scanAnalysis.isScanned) {
+      this.reportProgress(progressCallback, {
+        stage: 'ocr',
+        progress: 0,
+        totalPages: document.pageCount,
+        message: `Detected scanned PDF (confidence: ${(scanAnalysis.confidence * 100).toFixed(0)}%), running OCR...`
+      });
+
+      if (!this.ocrEngine) {
+        // Lazy import OCREngine
+        const { OCREngine } = await import('./ocr/ocr-engine.js');
+        this.ocrEngine = new OCREngine(this.config.ocrConfig);
+        await this.ocrEngine.initialize();
+      }
+
+      if (!this.ocrProcessor) {
+        this.ocrProcessor = new OCRProcessor(
+          this.ocrEngine,
+          this.config.ocrProcessorOptions
+        );
+      }
+
+      ocrResults = await this.ocrProcessor.processPages(document.pages);
+
+      // Merge OCR results into document content
+      for (const ocrPageResult of ocrResults) {
+        const page = document.pages[ocrPageResult.pageNumber];
+        if (page && ocrPageResult.results.length > 0) {
+          // Convert OCR results to PDFTextContent
+          const ocrTextContent = ocrPageResult.results.map((result: OCRResult) => {
+            const bbox = result.boundingBox;
+            return {
+              text: result.text,
+              x: bbox.x,
+              y: bbox.y,
+              width: bbox.width,
+              height: bbox.height,
+              fontSize: bbox.height * 0.8, // Estimate from bounding box
+              fontFamily: 'Arial',
+              fontWeight: 400,
+              fontStyle: 'normal' as const,
+              color: '#000000'
+            };
+          });
+          
+          page.content.text.push(...ocrTextContent);
+        }
+      }
+
+      this.reportProgress(progressCallback, {
+        stage: 'ocr',
+        progress: 100,
+        message: 'OCR completed'
+      });
+    } else if (this.config.enableOCR && !scanAnalysis.isScanned) {
+      this.reportProgress(progressCallback, {
+        stage: 'ocr',
+        progress: 100,
+        message: `PDF appears to have text content (${scanAnalysis.totalTextLength} chars, ${scanAnalysis.totalImageCount} images). Skipping OCR - use only for scanned PDFs.`
+      });
+    }
+
+    // Detect and map fonts
+    let fontMappings: Awaited<ReturnType<FontMapper['mapFonts']>> = [];
+    if (this.config.enableFontMapping && this.fontMapper) {
+      this.reportProgress(progressCallback, {
+        stage: 'font-mapping',
+        progress: 0,
+        message: 'Detecting fonts...'
+      });
+
+      const detectedFonts = this.fontDetector.detectFromTextContent(
+        document.pages.flatMap((p) => p.content.text)
+      );
+
+      this.reportProgress(progressCallback, {
+        stage: 'font-mapping',
+        progress: 50,
+        message: `Mapping ${detectedFonts.length} fonts to Google Fonts...`
+      });
+
+      fontMappings = await this.fontMapper.mapFonts(detectedFonts);
+
+      this.reportProgress(progressCallback, {
+        stage: 'font-mapping',
+        progress: 100,
+        message: 'Font mapping completed'
+      });
+    }
+
+    // Generate HTML
+    this.reportProgress(progressCallback, {
+      stage: 'html-generation',
+      progress: 0,
+      message: 'Generating HTML output...'
+    });
+
+    const metadata = {
+      pageCount: document.pageCount,
+      processingTime: Date.now() - startTime,
+      ocrUsed: this.config.enableOCR && scanAnalysis.isScanned,
+      fontMappings: fontMappings.length,
+      originalMetadata: document.metadata as Record<string, unknown>,
+      scannedPDF: scanAnalysis.isScanned,
+      scanConfidence: scanAnalysis.confidence
+    };
+
+    const output = this.htmlGenerator.generate(document, fontMappings, metadata);
+
+    this.reportProgress(progressCallback, {
+      stage: 'complete',
+      progress: 100,
+      message: 'Conversion completed'
+    });
+
+    return output;
+  }
+
+  private reportProgress(
+    callback: ProgressCallback | undefined,
+    progress: ConversionProgress
+  ): void {
+    if (callback) {
+      callback(progress);
+    }
+  }
+
+  dispose(): void {
+    this.parser.dispose();
+    if (this.ocrEngine && this.ocrEngine.dispose) {
+      this.ocrEngine.dispose();
+    }
+  }
+}
+
+export * from './types/index.js';
+export * from './core/index.js';
+export * from './ocr/index.js';
+export * from './fonts/index.js';
+export * from './html/index.js';
+

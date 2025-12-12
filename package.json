@@ -1,0 +1,70 @@
+{
+  "name": "pdf2html-client",
+  "version": "0.1.0",
+  "description": "Modern client-side PDF parsing library with WASM optimizations, OCR, and font mapping",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc && vite build",
+    "dev": "vite",
+    "test": "vitest",
+    "test:coverage": "vitest --coverage",
+    "test:ui": "vitest --ui",
+    "test:pdfs": "playwright test tests/browser/pdf-conversion.spec.ts",
+    "test:pdfs:headed": "playwright test tests/browser/pdf-conversion.spec.ts --headed",
+    "test:pdfs:debug": "playwright test tests/browser/pdf-conversion.spec.ts --debug",
+    "analyze-pdf": "playwright test tests/browser/pdf-analysis.spec.ts",
+    "test:browser": "playwright test",
+    "test:browser:ui": "playwright test --ui",
+    "lint": "eslint src --ext ts,tsx",
+    "type-check": "tsc --noEmit",
+    "demo": "vite --config vite.demo.config.ts",
+    "download-models": "tsx scripts/download-models.ts",
+    "postinstall": "tsx scripts/postinstall.ts"
+  },
+  "keywords": [
+    "pdf",
+    "html",
+    "ocr",
+    "wasm",
+    "client-side",
+    "font-mapping"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@hyzyla/pdfium": "^1.0.0",
+    "@techstark/opencv-js": "^4.11.0-release.1",
+    "onnxruntime-web": "^1.22.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.0.379"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.57.0",
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "@vitejs/plugin-react": "^4.2.0",
+    "@vitest/coverage-v8": "^1.0.4",
+    "@vitest/ui": "^1.0.4",
+    "dotenv": "^16.3.1",
+    "eslint": "^8.54.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.2",
+    "vite": "^5.0.5",
+    "vitest": "^1.0.4"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  }
+}

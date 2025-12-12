@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dist-demo/
+demo/pdfs/
+*.log
+.DS_Store
+.env
+.env.local
+coverage/
+*.tsbuildinfo
+.cache/
+.vite/
+
+

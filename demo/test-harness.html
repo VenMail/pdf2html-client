@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF2HTML Test Harness</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    #status {
+      padding: 10px;
+      background: #fff;
+      border-radius: 4px;
+      margin-bottom: 20px;
+    }
+    #results {
+      background: #fff;
+      padding: 20px;
+      border-radius: 4px;
+      white-space: pre-wrap;
+      font-family: monospace;
+      max-height: 80vh;
+      overflow: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">Initializing...</div>
+  <div id="results"></div>
+  
+  <script type="module">
+    // Static import to avoid dynamic import issues in browser tests
+    import('./dist/index.js').then(module => {
+      const PDF2HTML = module.PDF2HTML || module.default?.PDF2HTML || module.default;
+      
+      if (!PDF2HTML) {
+        throw new Error('PDF2HTML not found in module exports');
+      }
+      
+      console.log('PDF2HTML loaded via static import');
+      window.PDF2HTML = PDF2HTML;
+      window.__PDF2HTML_READY__ = true;
+      
+      document.getElementById('status').textContent = 'PDF2HTML Library Loaded ✓';
+      document.getElementById('status').style.color = 'green';
+    }).catch(error => {
+      const errorMsg = error.message || String(error);
+      document.getElementById('status').textContent = `Error: ${errorMsg}`;
+      document.getElementById('status').style.color = 'red';
+      window.__PDF2HTML_ERROR__ = errorMsg;
+      console.error('Failed to load PDF2HTML:', error);
+    });
+  </script>
+</body>
+</html>
+
