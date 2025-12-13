@@ -12,7 +12,7 @@ export default defineConfig({
       formats: ['es', 'umd']
     },
     rollupOptions: {
-      external: ['react', 'react-dom', '@hyzyla/pdfium'],
+      external: ['react', 'react-dom', '@embedpdf/pdfium', 'pdfjs-dist'],
       output: {
         globals: {
           react: 'React',
@@ -24,7 +24,7 @@ export default defineConfig({
     target: 'es2022'
   },
   optimizeDeps: {
-    exclude: ['@hyzyla/pdfium']
+    exclude: ['@embedpdf/pdfium']
   },
   worker: {
     format: 'es'

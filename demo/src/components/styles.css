@@ -144,4 +144,249 @@
   border: none;
 }
 
+.inspector-header {
+  margin-bottom: 16px;
+}
+
+.inspector-header h2 {
+  margin: 0 0 4px 0;
+  font-size: 20px;
+  color: #333;
+}
+
+.inspector-header p {
+  margin: 0;
+  font-size: 14px;
+  color: #666;
+}
+
+.inspector-layout {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.inspector-pane {
+  flex: 1;
+  min-width: 320px;
+}
+
+.pdf-inspector {
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+  background: white;
+  height: 600px;
+  display: flex;
+  flex-direction: column;
+}
+
+.pdf-inspector-toolbar {
+  padding: 12px;
+  border-bottom: 1px solid #e0e0e0;
+  background: #fafafa;
+}
+
+.pdf-inspector-toolbar-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.pdf-inspector-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #444;
+}
+
+.pdf-inspector-toolbar select,
+.pdf-inspector-toolbar input {
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 13px;
+  background: white;
+}
+
+.pdf-inspector-toolbar button {
+  padding: 8px 12px;
+  border: 1px solid #ccc;
+  background: white;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.pdf-inspector-toolbar button:hover:not(:disabled) {
+  background: #f5f5f5;
+}
+
+.pdf-inspector-toolbar button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.pdf-inspector-page-count {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #666;
+}
+
+.pdf-inspector-status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #666;
+  min-height: 16px;
+}
+
+.pdf-inspector-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pdf-inspector-targets {
+  padding: 12px;
+  border-bottom: 1px solid #e0e0e0;
+  background: white;
+}
+
+.pdf-inspector-targets select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: white;
+}
+
+.pdf-inspector-viewer {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: white;
+}
+
+.pdf-inspector-empty {
+  padding: 16px;
+  color: #666;
+}
+
+.raw-viewer {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.raw-viewer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  border-bottom: 1px solid #e0e0e0;
+  background: #fafafa;
+}
+
+.raw-viewer-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+}
+
+.raw-viewer-toolbar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.raw-viewer-toolbar-actions button,
+.raw-viewer-modes button {
+  padding: 6px 10px;
+  border: 1px solid #ccc;
+  background: white;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.3s;
+  font-size: 12px;
+}
+
+.raw-viewer-toolbar-actions button:hover:not(:disabled),
+.raw-viewer-modes button:hover:not(:disabled) {
+  background: #f5f5f5;
+}
+
+.raw-viewer-toolbar-actions button:disabled,
+.raw-viewer-modes button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.raw-viewer-modes {
+  padding: 8px 12px;
+  border-bottom: 1px solid #e0e0e0;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.raw-viewer-modes button.active {
+  background: #007bff;
+  color: white;
+  border-color: #007bff;
+}
+
+.raw-viewer-image-preview {
+  padding: 12px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.raw-viewer-image-preview img {
+  max-width: 100%;
+  max-height: 200px;
+  display: block;
+}
+
+.raw-viewer-summary {
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+}
+
+.raw-viewer-summary pre {
+  margin: 0;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.raw-viewer-pre {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 12px;
+  background: #f5f5f5;
+  overflow: auto;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.raw-viewer-pre code {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 900px) {
+  .pdf-inspector {
+    height: 500px;
+  }
+
+  .pdf-viewer {
+    height: 500px;
+  }
+}
+
 

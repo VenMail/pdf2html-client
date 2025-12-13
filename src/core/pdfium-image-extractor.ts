@@ -5,10 +5,29 @@ export interface PDFiumImageExtractionResult {
 }
 
 type PDFiumPage = {
-  getWidth: () => number;
-  getHeight: () => number;
-  render: (options?: { scale?: number }) => Promise<ImageData>;
+  getWidth?: () => number;
+  getHeight?: () => number;
+  render?: (options?: { scale?: number; render?: unknown }) => Promise<unknown>;
   getImages?: () => Promise<PDFiumImage[]>;
+  objects?: () => IterableIterator<unknown>;
+};
+
+type PDFiumImageDataRaw = {
+  data: Uint8Array;
+  width: number;
+  height: number;
+  filters?: string[];
+};
+
+type PDFiumPageObject = {
+  type?: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  rect?: number[];
+  render?: (options: { render?: 'bitmap' | ((options: unknown) => Promise<Uint8Array>) }) => Promise<unknown>;
+  getImageDataRaw?: () => PDFiumImageDataRaw;
 };
 
 type PDFiumImage = {
@@ -21,60 +40,101 @@ type PDFiumImage = {
 };
 
 export class PDFiumImageExtractor {
+  constructor(private enableFullPageRasterFallback: boolean = false) {}
+
   async extractImages(page: PDFiumPage): Promise<PDFiumImageExtractionResult> {
     const images: PDFImageContent[] = [];
 
     try {
+      const pageHeight = typeof page.getHeight === 'function' ? page.getHeight() : 0;
+
+      if (typeof page.objects === 'function') {
+        for (const obj of page.objects()) {
+          const o = obj as PDFiumPageObject;
+          if (o?.type !== 'image') {
+            continue;
+          }
+
+          const raw = typeof o.getImageDataRaw === 'function' ? o.getImageDataRaw() : null;
+          let rendered: unknown = null;
+          try {
+            if (typeof o.render === 'function') {
+              rendered = await o.render({ render: 'bitmap' });
+            }
+          } catch {
+            rendered = null;
+          }
+
+          const dataUrl = rendered ? this.renderedToDataUrl(rendered) : null;
+          if (!dataUrl && !raw) {
+            continue;
+          }
+
+          let x = 0;
+          let y = 0;
+          let w = 0;
+          let h = 0;
+          if (typeof o.x === 'number' && typeof o.y === 'number' && typeof o.width === 'number' && typeof o.height === 'number') {
+            x = o.x;
+            y = pageHeight ? pageHeight - o.y - o.height : o.y;
+            w = o.width;
+            h = o.height;
+          } else if (Array.isArray(o.rect) && o.rect.length >= 4) {
+            const [x1, y1, x2, y2] = o.rect;
+            x = x1;
+            y = pageHeight ? pageHeight - y2 : y1;
+            w = x2 - x1;
+            h = y2 - y1;
+          } else if (raw) {
+            w = raw.width;
+            h = raw.height;
+          } else {
+            const r = rendered as { width?: unknown; height?: unknown };
+            if (typeof r.width === 'number') w = r.width;
+            if (typeof r.height === 'number') h = r.height;
+          }
+
+          images.push({
+            data: dataUrl || this.rawToFallbackDataUrl(raw!),
+            format: 'png',
+            x,
+            y,
+            width: w,
+            height: h
+          });
+
+          if (images.length >= 50) break;
+        }
+      }
+
       // Try to get images directly if API available
-      if (page.getImages) {
+      if (images.length === 0 && page.getImages) {
         const pdfImages = await page.getImages();
         
         for (const img of pdfImages) {
-          const imageContent = this.parseImageItem(img, page.getHeight());
+          const imageContent = this.parseImageItem(img, pageHeight);
           if (imageContent) {
             images.push(imageContent);
           }
         }
-      } else {
+      } else if (this.enableFullPageRasterFallback) {
         // Fallback: render page to canvas and extract as single image
         // This captures the entire page as an image when individual image extraction isn't available
         try {
-          const imageData = await page.render({ scale: 1.0 });
-          
-          if (imageData && imageData.data) {
-            // Convert ImageData to base64
-            const canvas = typeof document !== 'undefined' 
-              ? document.createElement('canvas')
-              : null;
-            
-            if (canvas) {
-              canvas.width = imageData.width;
-              canvas.height = imageData.height;
-              const ctx = canvas.getContext('2d');
-              
-              if (ctx) {
-                ctx.putImageData(imageData, 0, 0);
-                const base64Data = canvas.toDataURL('image/png');
-                
-                images.push({
-                  data: base64Data,
-                  format: 'png',
-                  x: 0,
-                  y: 0,
-                  width: imageData.width,
-                  height: imageData.height
-                });
-              }
-            } else {
-              // Node.js environment - convert ImageData to base64 directly
-              const base64Data = this.convertImageDataToBase64(imageData);
+          const rendered = await page.render?.({ scale: 1.0, render: 'bitmap' });
+          if (rendered) {
+            const base64Data = this.renderedToDataUrl(rendered);
+            if (base64Data) {
+              const r = rendered as { width?: unknown; height?: unknown };
+              const w = typeof r.width === 'number' ? r.width : page.getWidth?.() || 0;
+              const h = typeof r.height === 'number' ? r.height : page.getHeight?.() || 0;
               images.push({
                 data: base64Data,
                 format: 'png',
                 x: 0,
                 y: 0,
-                width: imageData.width,
-                height: imageData.height
+                width: w,
+                height: h
               });
             }
           }
@@ -156,34 +216,58 @@ export class PDFiumImageExtractor {
     return `data:image/${format};base64,${base64}`;
   }
 
-  private convertImageDataToBase64(imageData: ImageData): string {
-    // Convert ImageData to base64 PNG
-    // In browser, we'd use canvas, but in Node.js we need to manually encode
+  private renderedToDataUrl(rendered: unknown): string | null {
+    const asImageData = rendered as ImageData;
+    if (
+      asImageData &&
+      typeof asImageData.width === 'number' &&
+      typeof asImageData.height === 'number' &&
+      asImageData.data instanceof Uint8ClampedArray
+    ) {
+      return this.rgbaToPngDataUrl(asImageData.data, asImageData.width, asImageData.height);
+    }
+
+    const asBitmap = rendered as { data?: unknown; width?: unknown; height?: unknown };
+    if (asBitmap?.data instanceof Uint8Array && typeof asBitmap.width === 'number' && typeof asBitmap.height === 'number') {
+      return this.rgbaToPngDataUrl(asBitmap.data, asBitmap.width, asBitmap.height);
+    }
+
+    const nested = rendered as { data?: unknown };
+    const inner = nested?.data as { data?: unknown; width?: unknown; height?: unknown } | undefined;
+    if (inner?.data instanceof Uint8Array && typeof inner.width === 'number' && typeof inner.height === 'number') {
+      return this.rgbaToPngDataUrl(inner.data, inner.width, inner.height);
+    }
+
+    return null;
+  }
+
+  private rgbaToPngDataUrl(rgba: Uint8Array | Uint8ClampedArray, width: number, height: number): string {
     if (typeof document !== 'undefined') {
       const canvas = document.createElement('canvas');
-      canvas.width = imageData.width;
-      canvas.height = imageData.height;
+      canvas.width = width;
+      canvas.height = height;
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        ctx.putImageData(imageData, 0, 0);
+        const clamped = rgba instanceof Uint8ClampedArray
+          ? Uint8ClampedArray.from(rgba)
+          : Uint8ClampedArray.from(rgba);
+        const img = new ImageData(clamped, width, height);
+        ctx.putImageData(img, 0, 0);
         return canvas.toDataURL('image/png');
       }
     }
-    
-    // Node.js fallback: convert ImageData to PNG manually
-    // This is a simplified approach - full PNG encoding would be more complex
-    // For now, we'll convert the raw pixel data
-    const data = imageData.data;
-    
-    // Simple base64 encoding of raw RGBA data
-    // Note: This won't be a valid PNG, but will work for display purposes
-    // In production, you'd want to use a proper PNG encoder library
+
     let binary = '';
-    for (let i = 0; i < data.length; i++) {
-      binary += String.fromCharCode(data[i]);
+    const u8 = rgba instanceof Uint8Array ? rgba : new Uint8Array(rgba.buffer, rgba.byteOffset, rgba.byteLength);
+    for (let i = 0; i < u8.length; i++) {
+      binary += String.fromCharCode(u8[i]);
     }
-    const base64 = btoa(binary);
+    const base64 = typeof Buffer !== 'undefined' ? Buffer.from(binary, 'binary').toString('base64') : btoa(binary);
     return `data:image/png;base64,${base64}`;
+  }
+
+  private rawToFallbackDataUrl(raw: PDFiumImageDataRaw): string {
+    return this.rgbaToPngDataUrl(raw.data, raw.width, raw.height);
   }
 }
 

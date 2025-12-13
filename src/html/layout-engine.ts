@@ -1,26 +1,31 @@
 import type { PDFTextContent, PDFImageContent } from '../types/pdf.js';
 import type { HTMLGenerationOptions } from '../types/output.js';
 import { TextProcessor, type ProcessedTextContent } from '../core/text-processor.js';
+import { LayoutAnalyzer } from '../core/layout-analyzer.js';
 
 export class LayoutEngine {
   private options: HTMLGenerationOptions;
   private textProcessor: TextProcessor;
+  private layoutAnalyzer: LayoutAnalyzer;
 
   constructor(options: HTMLGenerationOptions) {
     this.options = options;
     this.textProcessor = new TextProcessor();
+    this.layoutAnalyzer = new LayoutAnalyzer();
   }
 
   transformCoordinates(
     x: number,
     y: number,
-    pageHeight: number
+    pageHeight: number,
+    height: number = 0
   ): { x: number; y: number } {
     // PDF coordinates: origin at bottom-left
     // HTML coordinates: origin at top-left
     return {
       x,
-      y: pageHeight - y
+      // PDF y is at the baseline (or bottom for images). Shift by element height so CSS top aligns to top-left.
+      y: pageHeight - y - height
     };
   }
 
@@ -33,12 +38,21 @@ export class LayoutEngine {
     return this.generateProcessedTextElement(processed, pageHeight, fontClass);
   }
 
+  generateSvgTextElement(
+    text: PDFTextContent,
+    pageHeight: number,
+    fontClass: string
+  ): string {
+    const processed = this.textProcessor.processTextContent([text])[0];
+    return this.generateProcessedSvgTextElement(processed, pageHeight, fontClass);
+  }
+
   private generateProcessedTextElement(
     text: ProcessedTextContent,
     pageHeight: number,
     fontClass: string
   ): string {
-    const coords = this.transformCoordinates(text.x, text.y, pageHeight);
+    const coords = this.transformCoordinates(text.x, text.y, pageHeight, text.height);
 
     // Build style attributes
     const styleParts: string[] = [];
@@ -47,6 +61,7 @@ export class LayoutEngine {
       styleParts.push(`position: absolute`);
       styleParts.push(`left: ${coords.x}px`);
       styleParts.push(`top: ${coords.y}px`);
+      styleParts.push(`line-height: ${Math.max(1, Math.round(text.height))}px`);
       if (typeof text.rotation === 'number' && Math.abs(text.rotation) > 0.01) {
         styleParts.push(`transform: rotate(${text.rotation}deg)`);
         styleParts.push(`transform-origin: left top`);
@@ -91,12 +106,50 @@ export class LayoutEngine {
     return `<${tag}${attrsString}>${this.escapeHtml(text.text)}</${tag}>`;
   }
 
+  private generateProcessedSvgTextElement(
+    text: ProcessedTextContent,
+    pageHeight: number,
+    fontClass: string
+  ): string {
+    const x = text.x;
+    const y = pageHeight - text.y;
+
+    const attrs: string[] = [];
+    if (fontClass) {
+      attrs.push(`class="${fontClass}"`);
+    }
+
+    attrs.push(`x="${x}"`);
+    attrs.push(`y="${y}"`);
+    attrs.push('text-anchor="start"');
+    attrs.push('xml:space="preserve"');
+    attrs.push(`textLength="${Math.max(0, text.width)}"`);
+    attrs.push('lengthAdjust="spacingAndGlyphs"');
+
+    if (typeof text.rotation === 'number' && Math.abs(text.rotation) > 0.01) {
+      attrs.push(`transform="rotate(${text.rotation} ${x} ${y})"`);
+    }
+
+    const styleParts: string[] = [];
+    styleParts.push(`font-size: ${text.fontSize}px`);
+    styleParts.push(`fill: ${text.color}`);
+    if (text.fontWeight && text.fontWeight !== 400) styleParts.push(`font-weight: ${text.fontWeight}`);
+    if (text.fontStyle && text.fontStyle !== 'normal') styleParts.push(`font-style: ${text.fontStyle}`);
+    if (text.textDecoration && text.textDecoration !== 'none') styleParts.push(`text-decoration: ${text.textDecoration}`);
+
+    if (styleParts.length > 0) {
+      attrs.push(`style="${styleParts.join('; ')}"`);
+    }
+
+    return `<text ${attrs.join(' ')}>${this.escapeHtml(text.text)}</text>`;
+  }
+
   generateImageElement(
     image: PDFImageContent,
     pageHeight: number,
     baseUrl?: string
   ): string {
-    const coords = this.transformCoordinates(image.x, image.y, pageHeight);
+    const coords = this.transformCoordinates(image.x, image.y, pageHeight, image.height);
 
     let src: string;
     if (typeof image.data === 'string') {
@@ -120,18 +173,52 @@ export class LayoutEngine {
     }
 
     const style = this.options.preserveLayout
-      ? `position: absolute; left: ${coords.x}px; top: ${coords.y}px; width: ${image.width}px; height: ${image.height}px;`
+      ? (() => {
+          const parts: string[] = [];
+          parts.push('position: absolute');
+          parts.push(`left: ${coords.x}px`);
+          parts.push(`top: ${coords.y}px`);
+          parts.push(`width: ${image.width}px`);
+          parts.push(`height: ${image.height}px`);
+          if (typeof image.rotation === 'number' && Math.abs(image.rotation) > 0.01) {
+            parts.push(`transform: rotate(${image.rotation}deg)`);
+            parts.push('transform-origin: left top');
+          }
+          return parts.join('; ');
+        })()
       : `width: ${image.width}px; height: ${image.height}px; max-width: 100%;`;
 
     return `<img src="${this.escapeHtml(src)}" alt="" style="${style}" />`;
   }
 
   detectTable(textContents: PDFTextContent[]): TableStructure | null {
-    if (textContents.length < 4) {
-      return null; // Need at least a few cells
+    // Use LayoutAnalyzer for better table detection
+    const analysis = this.layoutAnalyzer.analyze(textContents);
+    const tableStructure = analysis.structures.find(s => s.type === 'table');
+    
+    if (tableStructure) {
+      const lines = this.groupIntoLinesForTable(tableStructure.items);
+      const tableRows: TableRow[] = lines.map((row) => ({
+        cells: row.map((item) => ({
+          text: item.text,
+          x: item.x,
+          y: item.y,
+          width: item.width,
+          height: item.height
+        }))
+      }));
+
+      return {
+        rows: tableRows,
+        columnCount: Math.max(...tableRows.map(r => r.cells.length), 0)
+      };
     }
 
-    // Group text items by Y position (rows)
+    // Fallback to original detection method
+    if (textContents.length < 4) {
+      return null;
+    }
+
     const yPositions = new Set(textContents.map((t) => Math.round(t.y)));
     const rows: PDFTextContent[][] = [];
 
@@ -145,16 +232,14 @@ export class LayoutEngine {
     }
 
     if (rows.length < 2) {
-      return null; // Need at least 2 rows
+      return null;
     }
 
-    // Check if items align into columns
     const columnCount = Math.max(...rows.map((r) => r.length));
     if (columnCount < 2) {
-      return null; // Need at least 2 columns
+      return null;
     }
 
-    // Verify alignment - check if items in same column have similar X positions
     const columnXPositions: number[][] = [];
     for (let col = 0; col < columnCount; col++) {
       const xPositions: number[] = [];
@@ -168,19 +253,17 @@ export class LayoutEngine {
       }
     }
 
-    // Check if columns are reasonably aligned
     const alignmentScore = columnXPositions.reduce((score, positions) => {
       if (positions.length < 2) return score;
       const avgX = positions.reduce((a, b) => a + b, 0) / positions.length;
       const variance = positions.reduce((sum, x) => sum + Math.pow(x - avgX, 2), 0) / positions.length;
-      return score + (1 / (1 + variance)); // Lower variance = better alignment
+      return score + (1 / (1 + variance));
     }, 0) / columnXPositions.length;
 
     if (alignmentScore < 0.5) {
-      return null; // Poor alignment, probably not a table
+      return null;
     }
 
-    // Build table structure
     const tableRows: TableRow[] = rows.map((row) => ({
       cells: row.map((item) => ({
         text: item.text,
@@ -195,6 +278,32 @@ export class LayoutEngine {
       rows: tableRows,
       columnCount
     };
+  }
+
+  private groupIntoLinesForTable(items: PDFTextContent[]): PDFTextContent[][] {
+    const lines = new Map<number, PDFTextContent[]>();
+    const tolerance = 3;
+
+    for (const item of items) {
+      const y = Math.round(item.y);
+      let found = false;
+
+      for (const [lineY, lineItems] of lines.entries()) {
+        if (Math.abs(lineY - y) < tolerance) {
+          lineItems.push(item);
+          found = true;
+          break;
+        }
+      }
+
+      if (!found) {
+        lines.set(y, [item]);
+      }
+    }
+
+    return Array.from(lines.values())
+      .map(line => line.sort((a, b) => a.x - b.x))
+      .sort((a, b) => b[0].y - a[0].y);
   }
 
   generateTableHTML(table: TableStructure): string {
@@ -220,7 +329,20 @@ export class LayoutEngine {
       return null;
     }
 
-    // Group text by Y position to find lines
+    // Use LayoutAnalyzer for better column detection
+    const analysis = this.layoutAnalyzer.analyze(textContents);
+    if (analysis.readingOrder.columns.length >= 2) {
+      return {
+        columns: analysis.readingOrder.columns.map(col => ({
+          x: col.x,
+          width: col.width,
+          content: col.content
+        })),
+        columnCount: analysis.readingOrder.columns.length
+      };
+    }
+
+    // Fallback to original detection method
     const lines = new Map<number, PDFTextContent[]>();
     for (const text of textContents) {
       const y = Math.round(text.y);
@@ -230,7 +352,6 @@ export class LayoutEngine {
       lines.get(y)!.push(text);
     }
 
-    // Find X positions that might indicate column boundaries
     const xPositions = new Set<number>();
     for (const text of textContents) {
       xPositions.add(Math.round(text.x));
@@ -239,12 +360,10 @@ export class LayoutEngine {
 
     const sortedX = Array.from(xPositions).sort((a, b) => a - b);
 
-    // Look for gaps that might indicate columns
     const gaps: Array<{ start: number; end: number; width: number }> = [];
     for (let i = 0; i < sortedX.length - 1; i++) {
       const gap = sortedX[i + 1] - sortedX[i];
       if (gap > 50) {
-        // Significant gap, might be column boundary
         gaps.push({
           start: sortedX[i],
           end: sortedX[i + 1],
@@ -254,17 +373,16 @@ export class LayoutEngine {
     }
 
     if (gaps.length === 0) {
-      return null; // No clear column separation
+      return null;
     }
 
-    // Determine column boundaries
     const columnBoundaries = [0, ...gaps.map((g) => g.end), Infinity];
     const columns: Column[] = [];
 
     for (let i = 0; i < columnBoundaries.length - 1; i++) {
       const x = columnBoundaries[i];
       const width = columnBoundaries[i + 1] === Infinity
-        ? 1000 // Estimate
+        ? 1000
         : columnBoundaries[i + 1] - x;
 
       const content = textContents.filter(

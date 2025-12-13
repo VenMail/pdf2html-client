@@ -19,6 +19,8 @@ export class FontMetricsComparator {
       );
 
       // Estimate Google Font metrics based on variant
+      // todo: guess from a pool of best variants and load only those variants for exact best guess
+      //since this is not currently loading fonts
       const estimatedMetrics = this.estimateGoogleFontMetrics(
         googleFont,
         variant,

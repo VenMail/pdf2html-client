@@ -1,31 +1,25 @@
 import type { PDFDocument, PDFParserOptions } from '../types/pdf.js';
 import { PDFiumWrapper } from './pdfium-wrapper.js';
-import { PDFJSWrapper } from './pdfjs-wrapper.js';
+import { UnPDFWrapper } from './unpdf-wrapper.js';
 
-export type ParserStrategy = 'pdfium' | 'pdfjs' | 'auto';
+export type ParserStrategy = 'auto' | 'pdfium' | 'unpdf';
 
 export class PDFParser {
   private pdfiumWrapper: PDFiumWrapper;
-  private pdfjsWrapper: PDFJSWrapper;
+  private unpdfWrapper: UnPDFWrapper | null = null;
   private strategy: ParserStrategy;
-  private pdfiumAvailable: boolean = false;
 
   constructor(strategy: ParserStrategy = 'auto') {
     this.strategy = strategy;
     this.pdfiumWrapper = new PDFiumWrapper();
-    this.pdfjsWrapper = new PDFJSWrapper();
   }
 
   async initialize(): Promise<void> {
-    if (this.strategy === 'auto' || this.strategy === 'pdfium') {
-      try {
-        await this.pdfiumWrapper.initialize();
-        this.pdfiumAvailable = true;
-      } catch (error) {
-        console.warn('PDFium initialization failed, falling back to pdf.js:', error);
-        this.pdfiumAvailable = false;
-      }
+    if (this.strategy === 'unpdf') {
+      if (!this.unpdfWrapper) this.unpdfWrapper = new UnPDFWrapper();
+      return;
     }
+    await this.pdfiumWrapper.initialize();
   }
 
   async parse(
@@ -38,23 +32,24 @@ export class PDFParser {
       extractAnnotations: false
     }
   ): Promise<PDFDocument> {
-    await this.initialize();
-
-    // Prefer PDF.js for graphics extraction since it handles SVG/vector content better
-    const usePDFium =
-      this.strategy === 'pdfium' ||
-      (this.strategy === 'auto' && this.pdfiumAvailable && !options.extractGraphics);
-
-    if (usePDFium) {
-      try {
-        return await this.pdfiumWrapper.parseDocument(data, options);
-      } catch (error) {
-        console.warn('PDFium parsing failed, falling back to pdf.js:', error);
-        return await this.pdfjsWrapper.parseDocument(data, options);
-      }
+    if (this.strategy === 'unpdf') {
+      await this.initialize();
+      if (!this.unpdfWrapper) this.unpdfWrapper = new UnPDFWrapper();
+      return await this.unpdfWrapper.parseDocument(data, options);
     }
 
-    return await this.pdfjsWrapper.parseDocument(data, options);
+    await this.initialize();
+    if (this.strategy === 'pdfium') {
+      return await this.pdfiumWrapper.parseDocument(data, options);
+    }
+
+    try {
+      return await this.pdfiumWrapper.parseDocument(data, options);
+    } catch (error) {
+      console.warn('PDFium parse failed; falling back to UnPDF:', error);
+      if (!this.unpdfWrapper) this.unpdfWrapper = new UnPDFWrapper();
+      return await this.unpdfWrapper.parseDocument(data, options);
+    }
   }
 
   async parseParallel(
@@ -68,36 +63,16 @@ export class PDFParser {
     },
     maxConcurrent: number = 4
   ): Promise<PDFDocument> {
-    await this.initialize();
-
-    const usePDFium =
-      this.strategy === 'pdfium' ||
-      (this.strategy === 'auto' && this.pdfiumAvailable);
-
-    if (usePDFium) {
-      try {
-        await this.pdfiumWrapper.loadDocument(data);
-        const pageCount = await this.pdfiumWrapper.getPageCount();
-        const pages = await this.parsePagesParallel(
-          (pageNum) => this.pdfiumWrapper.parsePage(pageNum, options),
-          pageCount,
-          maxConcurrent
-        );
-
-        return {
-          pageCount,
-          metadata: {},
-          pages
-        };
-      } catch (error) {
-        console.warn('PDFium parallel parsing failed, falling back to pdf.js:', error);
-      }
+    if (this.strategy === 'unpdf') {
+      throw new Error('parseParallel is not supported for UnPDF backend');
     }
 
-    await this.pdfjsWrapper.loadDocument(data);
-    const pageCount = await this.pdfjsWrapper.getPageCount();
+    await this.initialize();
+
+    await this.pdfiumWrapper.loadDocument(data);
+    const pageCount = await this.pdfiumWrapper.getPageCount();
     const pages = await this.parsePagesParallel(
-      (pageNum) => this.pdfjsWrapper.parsePage(pageNum, options),
+      (pageNum) => this.pdfiumWrapper.parsePage(pageNum, options),
       pageCount,
       maxConcurrent
     );
@@ -168,8 +143,7 @@ export class PDFParser {
 
   dispose(): void {
     this.pdfiumWrapper.dispose();
-    this.pdfjsWrapper.dispose();
+    this.unpdfWrapper?.dispose();
+    this.unpdfWrapper = null;
   }
 }
-
-

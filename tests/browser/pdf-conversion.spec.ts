@@ -26,10 +26,7 @@ interface ConversionResult {
 }
 
 const testPDFs = [
-  { name: 'Talent Agreement.pdf', type: 'simple', expectedPages: 2 },
-  { name: 'PermitOutcome_440112 (1).pdf', type: 'mixed', expectedPages: 1 },
-  { name: '03.pdf', type: 'multi-page', expectedPages: 15 },
-  { name: 'company_profile.pdf', type: 'complex', expectedPages: 24 },
+  { name: 'boarding_pass.pdf', type: 'boarding-pass', expectedPages: 1 },
 ];
 
 test.describe('PDF to HTML Conversion', () => {

@@ -1,11 +1,17 @@
-import React from 'react';
+import React, { useEffect, useMemo } from 'react';
 
 interface PDFViewerProps {
   file: File;
 }
 
 export default function PDFViewer({ file }: PDFViewerProps) {
-  const url = URL.createObjectURL(file);
+  const url = useMemo(() => URL.createObjectURL(file), [file]);
+
+  useEffect(() => {
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [url]);
 
   return (
     <div className="pdf-viewer">

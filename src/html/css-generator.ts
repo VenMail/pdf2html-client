@@ -103,6 +103,16 @@ body {
   }
 
   private generateBaseStyles(): string {
+    if (this.options.preserveLayout) {
+      return `
+.pdf-content {
+  margin: 0;
+  padding: 0;
+}
+
+${this.options.responsive ? this.generateResponsiveStyles() : ''}
+`;
+    }
     return `
 .pdf-content {
   max-width: 100%;
@@ -115,6 +125,15 @@ ${this.options.responsive ? this.generateResponsiveStyles() : ''}
   }
 
   private generateResponsiveStyles(): string {
+    if (this.options.preserveLayout) {
+      return `
+@media (max-width: 768px) {
+  .pdf-content {
+    padding: 0;
+  }
+}
+`;
+    }
     return `
 @media (max-width: 768px) {
   .pdf-content {
@@ -144,9 +163,9 @@ ${this.options.responsive ? this.generateResponsiveStyles() : ''}
   height: ${page.height}px;
   aspect-ratio: ${aspectRatio};
   position: relative;
-  margin-bottom: 20px;
+  margin: 0;
   background: white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: none;
 }
 `);
     }

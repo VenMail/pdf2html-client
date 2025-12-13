@@ -6,9 +6,9 @@ export interface PDFiumTextExtractionResult {
 }
 
 type PDFiumPage = {
-  getWidth: () => number;
-  getHeight: () => number;
-  getText: () => Promise<string>;
+  getWidth?: () => number;
+  getHeight?: () => number;
+  getText?: () => Promise<string> | string;
   getTextWithPosition?: () => Promise<PDFiumTextItem[]>;
 };
 
@@ -27,13 +27,15 @@ export class PDFiumTextExtractor {
     const textContents: PDFTextContent[] = [];
     const fonts = new Map<string, PDFFontInfo>();
 
+    const pageHeight = typeof page.getHeight === 'function' ? page.getHeight() : 0;
+
     try {
       // Try to get text with positioning if available
       if (page.getTextWithPosition) {
         const textItems = await page.getTextWithPosition();
         
         for (const item of textItems) {
-          const textContent = this.parseTextItem(item, page.getHeight());
+          const textContent = this.parseTextItem(item, pageHeight);
           if (textContent) {
             textContents.push(textContent);
 
@@ -48,11 +50,10 @@ export class PDFiumTextExtractor {
         }
       } else {
         // Fallback: get plain text and estimate positions
-        const text = await page.getText();
+        const text = typeof page.getText === 'function' ? await page.getText() : '';
         if (text) {
           // Split text into lines and estimate positions
           const lines = text.split('\n');
-          const pageHeight = page.getHeight();
           const fontSize = 12; // Default estimate
           const lineHeight = fontSize * 1.2;
 

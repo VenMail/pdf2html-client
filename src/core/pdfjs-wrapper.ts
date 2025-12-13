@@ -66,15 +66,19 @@ export class PDFJSWrapper {
   }
 
   private async extractGraphics(pdfPage: PDFJSPage, pageHeight: number): Promise<PDFGraphicsContent[]> {
-    // Lazy-load OPS constants
+    // Lazy-load OPS constants - use dynamic import with Function to avoid Vite static analysis
     let OPS: Record<string, number> | undefined;
     try {
-      const pdfjs = await import('pdfjs-dist') as unknown as {
+      // Use Function constructor to make import truly dynamic and avoid Vite static analysis
+      const importPdfjs = new Function('specifier', 'return import(specifier)');
+      const pdfjs = await importPdfjs('pdfjs-dist') as unknown as {
         OPS?: Record<string, number>;
         default?: { OPS?: Record<string, number> };
       };
       OPS = pdfjs.OPS || pdfjs.default?.OPS;
     } catch (error) {
+      // pdfjs-dist not available or failed to load OPS, skip graphics extraction
+      OPS = undefined;
       console.debug('Failed to load pdf.js OPS for graphics:', error);
     }
     if (!OPS || typeof pdfPage.getOperatorList !== 'function') {
@@ -284,35 +288,37 @@ export class PDFJSWrapper {
       // Import PDF.js library
       // Use standard build for both browser and Node.js
       // Node.js will use main thread if worker is disabled
-      const imported = await import('pdfjs-dist');
+      try {
+        // Use Function constructor to make import truly dynamic and avoid Vite static analysis
+        const importPdfjs = new Function('specifier', 'return import(specifier)');
+        const imported = await importPdfjs('pdfjs-dist');
       
       // Handle default export if present
       this.pdfjsLib = imported.default || imported;
       
       // Set worker source
-      if (typeof window !== 'undefined') {
-        // Browser environment - use CDN or local worker
-        if (this.pdfjsLib.GlobalWorkerOptions) {
-          // Try to use local worker first, fallback to CDN
+      if (this.pdfjsLib.GlobalWorkerOptions) {
+        if (typeof window !== 'undefined') {
+          // Browser environment - use CDN or local worker
           try {
-            // In Vite, we can use the worker from node_modules
             const workerUrl = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).href;
             this.pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
           } catch (e) {
-            // Fallback to CDN
             this.pdfjsLib.GlobalWorkerOptions.workerSrc = 
               `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${this.pdfjsLib.version}/pdf.worker.min.js`;
           }
-        }
-      } else {
-        // Node.js environment - set empty string to disable worker (use main thread)
-        // This is required as workers don't work the same way in Node.js
-        if (this.pdfjsLib.GlobalWorkerOptions) {
+        } else {
+          // Node.js environment - disable worker
           this.pdfjsLib.GlobalWorkerOptions.workerSrc = '';
         }
       }
       
-      this.workerInitialized = true;
+        this.workerInitialized = true;
+      } catch (importError) {
+        console.warn('pdfjs-dist not available, PDFJSWrapper will not work. Use UnPDFWrapper instead.');
+        this.workerInitialized = false;
+        return;
+      }
     } catch (error) {
       console.warn('Failed to initialize PDF.js worker:', error);
       // Continue without worker - PDF.js will use main thread
@@ -343,7 +349,8 @@ export class PDFJSWrapper {
       const docOptions: Record<string, unknown> = {
         data,
         verbosity: typeof window === 'undefined' ? 0 : undefined, // Reduce warnings in Node.js
-        disableWorker: typeof window === 'undefined' // Disable workers in Node.js
+        // Explicitly disable worker in Node; pdf.js throws if workerSrc unset
+        disableWorker: true
       };
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

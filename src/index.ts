@@ -5,17 +5,21 @@ import type {
   ProgressCallback
 } from './types/index.js';
 import type { OCRResult } from './types/ocr.js';
+import type { OCRPageResult } from './types/ocr.js';
 import { PDFParser } from './core/pdf-parser.js';
+import { RegionLayoutAnalyzer } from './core/region-layout.js';
 import { OCRProcessor } from './ocr/ocr-processor.js';
 import { FontDetector } from './fonts/font-detector.js';
 import { FontMapper } from './fonts/font-mapper.js';
 import { HTMLGenerator } from './html/html-generator.js';
 
+import type { OCREngine } from './ocr/ocr-engine.js';
+
 export class PDF2HTML {
   private config: PDF2HTMLConfig;
   private parser: PDFParser;
-  private ocrEngine: any = null; // Lazy loaded
-  private ocrProcessor: any = null; // Lazy loaded
+  private ocrEngine: OCREngine | null = null; // Lazy loaded
+  private ocrProcessor: OCRProcessor | null = null; // Lazy loaded
   private fontDetector: FontDetector;
   private fontMapper: FontMapper | null = null;
   private htmlGenerator: HTMLGenerator;
@@ -37,7 +41,9 @@ export class PDF2HTML {
         preserveLayout: true,
         responsive: true,
         darkMode: false,
-        imageFormat: 'base64'
+        imageFormat: 'base64',
+        textLayout: 'absolute',
+        textLayoutPasses: 1
       };
     }
 
@@ -46,11 +52,14 @@ export class PDF2HTML {
 
     if (this.config.enableFontMapping) {
       // Get API key from environment or config
-      const apiKey = typeof process !== 'undefined' && process.env?.GOOGLE_API_KEY
-        ? process.env.GOOGLE_API_KEY
-        : typeof window !== 'undefined' && (window as any).__GOOGLE_API_KEY__
-          ? (window as any).__GOOGLE_API_KEY__
-          : undefined;
+      const apiKey =
+        typeof process !== 'undefined' &&
+        typeof (process as unknown as { env?: { GOOGLE_API_KEY?: string } }).env?.GOOGLE_API_KEY === 'string'
+          ? (process as unknown as { env: { GOOGLE_API_KEY: string } }).env.GOOGLE_API_KEY
+          : typeof window !== 'undefined' &&
+              typeof (window as unknown as { __GOOGLE_API_KEY__?: string }).__GOOGLE_API_KEY__ === 'string'
+            ? (window as unknown as { __GOOGLE_API_KEY__: string }).__GOOGLE_API_KEY__
+            : undefined;
       
       this.fontMapper = new FontMapper(this.config.fontMappingOptions, apiKey);
     }
@@ -105,8 +114,9 @@ export class PDF2HTML {
     // Process OCR only if:
     // 1. OCR is enabled
     // 2. PDF is detected as scanned (little text but has images)
-    let ocrResults = null;
+    let ocrResults: OCRPageResult[] | null = null;
     if (this.config.enableOCR && scanAnalysis.isScanned) {
+      const regionLayoutAnalyzer = new RegionLayoutAnalyzer();
       this.reportProgress(progressCallback, {
         stage: 'ocr',
         progress: 0,
@@ -123,35 +133,65 @@ export class PDF2HTML {
 
       if (!this.ocrProcessor) {
         this.ocrProcessor = new OCRProcessor(
-          this.ocrEngine,
+          this.ocrEngine!,
           this.config.ocrProcessorOptions
         );
       }
 
-      ocrResults = await this.ocrProcessor.processPages(document.pages);
+      ocrResults = await this.ocrProcessor!.processPages(document.pages);
 
       // Merge OCR results into document content
       for (const ocrPageResult of ocrResults) {
         const page = document.pages[ocrPageResult.pageNumber];
         if (page && ocrPageResult.results.length > 0) {
           // Convert OCR results to PDFTextContent
-          const ocrTextContent = ocrPageResult.results.map((result: OCRResult) => {
-            const bbox = result.boundingBox;
+          const ocrWords = ocrPageResult.results.flatMap((result: OCRResult) => {
+            if (Array.isArray(result.words) && result.words.length > 0) return result.words;
+            return [
+              {
+                text: result.text,
+                confidence: result.confidence,
+                boundingBox: result.boundingBox
+              }
+            ];
+          });
+
+          const ocrTextContent = ocrWords.map((word) => {
+            const bbox = word.boundingBox;
             return {
-              text: result.text,
+              text: word.text,
               x: bbox.x,
               y: bbox.y,
               width: bbox.width,
               height: bbox.height,
-              fontSize: bbox.height * 0.8, // Estimate from bounding box
+              fontSize: bbox.height * 0.8,
               fontFamily: 'Arial',
               fontWeight: 400,
               fontStyle: 'normal' as const,
               color: '#000000'
             };
           });
+
+          ocrTextContent.sort((a, b) => {
+            const yDiff = b.y - a.y;
+            if (Math.abs(yDiff) > 1.5) return yDiff;
+            return a.x - b.x;
+          });
+
+          const merged = regionLayoutAnalyzer.mergeTextRunsByLine({
+            pageNumber: page.pageNumber,
+            width: page.width,
+            height: page.height,
+            content: {
+              text: ocrTextContent,
+              images: [],
+              graphics: [],
+              forms: [],
+              annotations: []
+            }
+          });
           
-          page.content.text.push(...ocrTextContent);
+          page.content.text.push(...merged);
         }
       }
 
@@ -203,6 +243,43 @@ export class PDF2HTML {
       message: 'Generating HTML output...'
     });
 
+    const imageStats = (() => {
+      const totalPages = document.pageCount;
+      let totalImages = 0;
+      let positionedImages = 0;
+      let fullPageRasterImages = 0;
+      let rasterGraphics = 0;
+
+      for (const page of document.pages) {
+        totalImages += page.content.images.length;
+
+        for (const img of page.content.images) {
+          const isFullPage =
+            img.x === 0 &&
+            img.y === 0 &&
+            Math.abs(img.width - page.width) < 1 &&
+            Math.abs(img.height - page.height) < 1;
+          if (isFullPage) {
+            fullPageRasterImages += 1;
+          } else {
+            positionedImages += 1;
+          }
+        }
+
+        for (const g of page.content.graphics) {
+          if (g.type === 'raster') rasterGraphics += 1;
+        }
+      }
+
+      return {
+        totalPages,
+        totalImages,
+        positionedImages,
+        fullPageRasterImages,
+        rasterGraphics
+      };
+    })();
+
     const metadata = {
       pageCount: document.pageCount,
       processingTime: Date.now() - startTime,
@@ -210,7 +287,8 @@ export class PDF2HTML {
       fontMappings: fontMappings.length,
       originalMetadata: document.metadata as Record<string, unknown>,
       scannedPDF: scanAnalysis.isScanned,
-      scanConfidence: scanAnalysis.confidence
+      scanConfidence: scanAnalysis.confidence,
+      imageStats
     };
 
     const output = this.htmlGenerator.generate(document, fontMappings, metadata);

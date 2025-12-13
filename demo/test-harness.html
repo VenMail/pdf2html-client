@@ -33,27 +33,39 @@
   <div id="results"></div>
   
   <script type="module">
-    // Static import to avoid dynamic import issues in browser tests
-    import('./dist/index.js').then(module => {
+    // Import from source via Vite
+    try {
+      // Force PDFium wasm to load locally (faster + deterministic in Playwright)
+      window.__PDFIUM_WASM_URL__ = '/pdfium.wasm';
+
+      const pdfWorkerUrl = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
+
+      const importedPdfjs = await import('pdfjs-dist');
+      const pdfjs = importedPdfjs.default || importedPdfjs;
+      if (pdfjs?.GlobalWorkerOptions) {
+        pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+      }
+      const module = await import('../src/index.ts');
       const PDF2HTML = module.PDF2HTML || module.default?.PDF2HTML || module.default;
       
       if (!PDF2HTML) {
         throw new Error('PDF2HTML not found in module exports');
       }
       
-      console.log('PDF2HTML loaded via static import');
+      console.log('PDF2HTML loaded via Vite');
       window.PDF2HTML = PDF2HTML;
+      window.__PDFJS__ = pdfjs;
       window.__PDF2HTML_READY__ = true;
       
       document.getElementById('status').textContent = 'PDF2HTML Library Loaded ✓';
       document.getElementById('status').style.color = 'green';
-    }).catch(error => {
+    } catch (error) {
       const errorMsg = error.message || String(error);
       document.getElementById('status').textContent = `Error: ${errorMsg}`;
       document.getElementById('status').style.color = 'red';
       window.__PDF2HTML_ERROR__ = errorMsg;
       console.error('Failed to load PDF2HTML:', error);
-    });
+    }
   </script>
 </body>
 </html>

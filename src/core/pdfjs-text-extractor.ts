@@ -37,15 +37,15 @@ export class PDFJSTextExtractor {
     const fonts = new Map<string, PDFFontInfo>();
 
     try {
-      await this.collectText(page, textContents, fonts);
+      // Use permissive options by default to avoid text loss from item merging
+      await this.collectText(page, textContents, fonts, {
+        includeMarkedContent: true,
+        disableCombineTextItems: true
+      });
       // Some PDFs return no positioned items (e.g., pure XObjects or unusual encodings).
-      // Retry with more permissive options if we got nothing.
+      // Retry once more without extra options in case implementations differ.
       if (textContents.length === 0 && (page as { getTextContent?: unknown }).getTextContent) {
-        await this.collectText(page, textContents, fonts, {
-          // Preserve marked content and avoid combining items so nothing is lost
-          includeMarkedContent: true,
-          disableCombineTextItems: true
-        });
+        await this.collectText(page, textContents, fonts);
       }
     } catch (error) {
       console.warn('Failed to extract text from page:', error);
@@ -66,10 +66,9 @@ export class PDFJSTextExtractor {
     const textContent = await (page as PDFJSPage & {
       getTextContent?: (opts?: Record<string, unknown>) => Promise<PDFJSTextContent>;
     }).getTextContent?.(options) as PDFJSTextContent;
-    const viewport = page.getViewport({ scale: 1.0 });
 
     for (const item of textContent.items) {
-      const textItem = this.parseTextItem(item, textContent.styles, viewport.height);
+      const textItem = this.parseTextItem(item, textContent.styles);
       if (textItem) {
         textContents.push(textItem);
 
@@ -92,8 +91,7 @@ export class PDFJSTextExtractor {
 
   private parseTextItem(
     item: PDFJSTextItem,
-    styles: Record<string, PDFJSFontStyle>,
-    pageHeight: number
+    styles: Record<string, PDFJSFontStyle>
   ): PDFTextContent | null {
     if (!item.str || item.str.trim().length === 0) {
       return null;
@@ -104,8 +102,8 @@ export class PDFJSTextExtractor {
     const transform = item.transform || [1, 0, 0, 1, 0, 0];
     const [a, b, c, d, e, f] = transform;
     const x = e;
-    // PDF coordinates are bottom-left; convert to top-left for HTML
-    const y = pageHeight - f;
+    // Keep PDF-space Y (origin bottom-left). We invert once later in the layout engine.
+    const y = f;
     const rotationRad = Math.atan2(b, a);
     const rotationDeg = (rotationRad * 180) / Math.PI;
 

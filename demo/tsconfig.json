@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "rootDir": "..",
+    "outDir": "./dist"
+  },
+  "include": ["src/**/*", "../src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

@@ -2,16 +2,19 @@ import React, { useState } from 'react';
 import PDFUploader from './components/PDFUploader';
 import PDFViewer from './components/PDFViewer';
 import HTMLOutput from './components/HTMLOutput';
+import PDFInspector from './components/inspector/PDFInspector';
 import type { HTMLOutput as HTMLOutputType, ConversionProgress } from '../../src/types';
 import './components/styles.css';
 
 function App() {
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [htmlOutput, setHtmlOutput] = useState<HTMLOutputType | null>(null);
   const [progress, setProgress] = useState<ConversionProgress | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleFileUpload = async (file: File) => {
+    setPdfFile(file);
     setLoading(true);
     setError(null);
     setHtmlOutput(null);
@@ -24,7 +27,7 @@ function App() {
       const apiKey = import.meta.env.GOOGLE_API_KEY;
       if (apiKey) {
         // Make API key available globally for font mapper
-        (window as any).__GOOGLE_API_KEY__ = apiKey;
+        window.__GOOGLE_API_KEY__ = apiKey;
       }
 
       const converter = new PDF2HTML({
@@ -34,11 +37,12 @@ function App() {
           format: 'html+inline-css',
           preserveLayout: true,
           responsive: true,
-          darkMode: false
+          darkMode: false,
+          imageFormat: 'base64'
         }
       });
 
-      const output = await converter.convert(file, (progress) => {
+      const output = await converter.convert(file, (progress: ConversionProgress) => {
         setProgress(progress);
       });
 
@@ -82,6 +86,23 @@ function App() {
         {htmlOutput && (
           <div className="output-section">
             <HTMLOutput output={htmlOutput} />
+          </div>
+        )}
+
+        {pdfFile && (
+          <div className="output-section">
+            <div className="inspector-header">
+              <h2>PDF Inspector</h2>
+              <p>Debug view for decoded structures via unpdf and pdfium</p>
+            </div>
+            <div className="inspector-layout">
+              <div className="inspector-pane">
+                <PDFViewer file={pdfFile} />
+              </div>
+              <div className="inspector-pane">
+                <PDFInspector file={pdfFile} />
+              </div>
+            </div>
           </div>
         )}
       </main>

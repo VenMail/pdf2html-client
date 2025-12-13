@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, copyFileSync } from 'fs';
 import { join } from 'path';
 
 const MODELS_DIR = join(process.cwd(), 'models');
@@ -85,7 +85,38 @@ async function ensureModels(): Promise<void> {
   console.log(`Models directory: ${MODELS_DIR}`);
 }
 
-ensureModels().catch((error) => {
+async function ensurePdfiumWasm(): Promise<void> {
+  const demoPublicDir = join(process.cwd(), 'demo', 'public');
+  const outPath = join(demoPublicDir, 'pdfium.wasm');
+  const srcPath = join(process.cwd(), 'node_modules', '@embedpdf', 'pdfium', 'dist', 'pdfium.wasm');
+
+  try {
+    mkdirSync(demoPublicDir, { recursive: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+      throw error;
+    }
+  }
+
+  if (!existsSync(srcPath)) {
+    console.warn(`PDFium wasm not found at ${srcPath}. Skipping local wasm copy.`);
+    return;
+  }
+
+  if (existsSync(outPath)) {
+    return;
+  }
+
+  copyFileSync(srcPath, outPath);
+  console.log(`✓ Copied PDFium wasm to ${outPath}`);
+}
+
+async function main(): Promise<void> {
+  await ensureModels();
+  await ensurePdfiumWasm();
+}
+
+main().catch((error) => {
   console.error('Error ensuring models:', error);
   process.exit(1);
 });

@@ -4,13 +4,20 @@ export interface PDFJSImageExtractionResult {
   images: PDFImageContent[];
 }
 
-type PDFJSViewport = { width: number; height: number };
+type PDFJSViewport = { width: number; height: number } & Record<string, unknown>;
 
 type PDFJSPage = {
   getOperatorList: () => Promise<PDFJSOperatorList>;
   getViewport: (options: { scale: number }) => PDFJSViewport;
   getResources: () => Promise<PDFJSResources>;
-  render?: (options: { canvasContext: CanvasRenderingContext2D; viewport: PDFJSViewport }) => Promise<void>;
+  render?: (options: { canvasContext: CanvasRenderingContext2D; viewport: PDFJSViewport }) => unknown;
+};
+
+type PDFJSPageWithObjs = PDFJSPage & {
+  objs?: {
+    get?: (...args: unknown[]) => unknown;
+    has?: (name: string) => boolean;
+  };
 };
 
 type PDFJSOperatorList = {
@@ -32,18 +39,22 @@ type PDFJSXObject = {
 };
 
 export class PDFJSImageExtractor {
+  constructor(private enableFullPageRasterFallback: boolean = false) {}
+
   async extractImages(page: PDFJSPage): Promise<PDFJSImageExtractionResult> {
     const images: PDFImageContent[] = [];
     const resourceImages = new Map<string, PDFImageContent>(); // keyed by XObject name
+    // Access pdf.js internal object store when available (used by operator list)
+    const objectStore = (page as PDFJSPageWithObjs).objs;
 
     try {
       const viewport = page.getViewport({ scale: 1.0 });
-      // Try to load OPS constants for operator parsing
+      // Try to load OPS constants for operator parsing using unpdf
       let OPS: Record<string, number> | undefined;
       try {
-        const pdfjs = await import('pdfjs-dist');
-        const moduleMaybe = pdfjs as { OPS?: Record<string, number>; default?: { OPS?: Record<string, number> } };
-        OPS = moduleMaybe.OPS || moduleMaybe.default?.OPS;
+        const imported = await import('pdfjs-dist');
+        const pdfjs = (imported as unknown as { OPS?: Record<string, number>; default?: { OPS?: Record<string, number> } });
+        OPS = pdfjs.OPS || pdfjs.default?.OPS;
       } catch (opsError) {
         console.debug('Failed to load pdf.js OPS constants, image placement may be degraded:', opsError);
       }
@@ -67,7 +78,8 @@ export class PDFJSImageExtractor {
             for (const key of xObjectKeys) {
               try {
                 if (typeof resources.get === 'function') {
-                  const xObject = await resources.get(key);
+                  const maybeXObject = resources.get(key);
+                  const xObject = maybeXObject instanceof Promise ? await maybeXObject : maybeXObject;
                   if (xObject) {
                     const imageContent = await this.extractXObjectImage(xObject, viewport);
                     if (imageContent) {
@@ -92,6 +104,84 @@ export class PDFJSImageExtractor {
         if (OPS && page.getOperatorList) {
           const opList = await page.getOperatorList();
           const { fnArray, argsArray } = opList;
+
+          const resolveObj = async (name: string): Promise<unknown> => {
+            if (!objectStore?.get) return undefined;
+            try {
+              const getFn = objectStore.get as (...args: unknown[]) => unknown;
+              return await new Promise((resolve) => {
+                let settled = false;
+                const finish = (value: unknown): void => {
+                  if (settled) return;
+                  settled = true;
+                  resolve(value);
+                };
+
+                // Prefer callback-based API when available. In pdf.js, PDFObjects.get accepts an
+                // optional callback even when get.length === 1.
+                try {
+                  const maybe = getFn(name, (value: unknown) => finish(value));
+                  if (maybe !== undefined) {
+                    finish(maybe);
+                  }
+                  return;
+                } catch {
+                  // ignore and fall back
+                }
+
+                try {
+                  finish(getFn(name));
+                } catch {
+                  finish(undefined);
+                }
+              });
+            } catch {
+              return undefined;
+            }
+          };
+
+          const rgbaToPngDataUrl = (rgba: Uint8Array, width: number, height: number): string | null => {
+            try {
+              if (typeof document === 'undefined') return null;
+              const canvas = document.createElement('canvas');
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) return null;
+              // Ensure the backing buffer is a real ArrayBuffer to satisfy TS DOM types (avoid SharedArrayBuffer issues).
+              const clamped = rgba instanceof Uint8ClampedArray
+                ? Uint8ClampedArray.from(rgba)
+                : Uint8ClampedArray.from(rgba);
+              const img = new ImageData(clamped, width, height);
+              ctx.putImageData(img, 0, 0);
+              return canvas.toDataURL('image/png');
+            } catch {
+              return null;
+            }
+          };
+
+          const resolveImageFromObjs = async (name: string): Promise<PDFImageContent | null> => {
+            const resolved = await resolveObj(name);
+            if (!resolved || typeof resolved !== 'object') return null;
+
+            const maybe = resolved as {
+              data?: Uint8Array;
+              width?: number;
+              height?: number;
+            };
+            if (!maybe.data || !maybe.width || !maybe.height) return null;
+
+            const dataUrl = rgbaToPngDataUrl(maybe.data, maybe.width, maybe.height);
+            if (!dataUrl) return null;
+            return {
+              data: dataUrl,
+              format: 'png',
+              x: 0,
+              y: 0,
+              width: maybe.width,
+              height: maybe.height
+            };
+          };
 
           const multiply = (m1: number[], m2: number[]): number[] => {
             const [a1, b1, c1, d1, e1, f1] = m1;
@@ -119,8 +209,8 @@ export class PDFJSImageExtractor {
               ...base,
               x: e,
               y: f,
-              width: base.width * scaleX,
-              height: base.height * scaleY
+              width: scaleX,
+              height: scaleY
             });
           };
 
@@ -144,15 +234,25 @@ export class PDFJSImageExtractor {
               }
               case OPS.paintImageXObject: {
                 const name = args?.[0] as string | undefined;
-                if (name && resourceImages.has(name)) {
-                  placeImage(resourceImages.get(name)!);
+                if (name) {
+                  if (resourceImages.has(name)) {
+                    placeImage(resourceImages.get(name)!);
+                  } else {
+                    const extracted = await resolveImageFromObjs(name);
+                    if (extracted) placeImage(extracted);
+                  }
                 }
                 break;
               }
               case OPS.paintImageXObjectRepeat: {
                 const name = args?.[0] as string | undefined;
-                if (name && resourceImages.has(name)) {
-                  placeImage(resourceImages.get(name)!);
+                if (name) {
+                  if (resourceImages.has(name)) {
+                    placeImage(resourceImages.get(name)!);
+                  } else {
+                    const extracted = await resolveImageFromObjs(name);
+                    if (extracted) placeImage(extracted);
+                  }
                 }
                 break;
               }
@@ -183,7 +283,10 @@ export class PDFJSImageExtractor {
 
       // Method 2: Fallback - render page to canvas and extract as single image
       // This is used when individual images can't be extracted
-      if (images.length === 0 && page.render) {
+      // Important: if we already discovered XObject images (resourceImages) but failed to place them,
+      // do NOT inject a full-page raster here ("giant image"). That would mask placement bugs and
+      // makes the HTML output harder to debug.
+      if (this.enableFullPageRasterFallback && images.length === 0 && resourceImages.size === 0 && page.render) {
         try {
           const canvas = typeof document !== 'undefined' 
             ? document.createElement('canvas')
@@ -195,10 +298,15 @@ export class PDFJSImageExtractor {
             const ctx = canvas.getContext('2d');
             
             if (ctx) {
-              await page.render({
+              const renderResult = page.render({
                 canvasContext: ctx,
-                viewport: viewport
+                viewport
               });
+              if (renderResult && typeof renderResult === 'object' && 'promise' in renderResult) {
+                await (renderResult as { promise: Promise<unknown> }).promise;
+              } else {
+                await Promise.resolve(renderResult);
+              }
               
               // Convert canvas to image
               const imageData = canvas.toDataURL('image/png');

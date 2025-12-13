@@ -70,6 +70,15 @@ export interface PDFImageContent {
   width: number;
   height: number;
   dpi?: number;
+  rotation?: number;
+  matrix?: [number, number, number, number, number, number];
+  filters?: string[];
+  rawData?: ArrayBuffer;
+  decodedData?: ArrayBuffer;
+  pixelWidth?: number;
+  pixelHeight?: number;
+  bitsPerPixel?: number;
+  colorSpace?: number;
 }
 
 export interface PDFGraphicsContent {
@@ -81,6 +90,7 @@ export interface PDFGraphicsContent {
   height?: number;
   stroke?: string;
   fill?: string;
+  fillRule?: 'nonzero' | 'evenodd';
   strokeWidth?: number;
   strokeOpacity?: number;
   fillOpacity?: number;

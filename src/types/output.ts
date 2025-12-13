@@ -13,6 +13,13 @@ export interface OutputMetadata {
   originalMetadata?: Record<string, unknown>;
   scannedPDF?: boolean;
   scanConfidence?: number;
+  imageStats?: {
+    totalPages: number;
+    totalImages: number;
+    positionedImages: number;
+    fullPageRasterImages: number;
+    rasterGraphics: number;
+  };
 }
 
 export interface HTMLGenerationOptions {
@@ -22,6 +29,9 @@ export interface HTMLGenerationOptions {
   darkMode: boolean;
   baseUrl?: string;
   imageFormat: 'base64' | 'url';
+  textLayout?: 'absolute' | 'smart';
+  textLayoutPasses?: 1 | 2;
+  textRenderMode?: 'html' | 'svg';
 }
 
 export interface CSSOptions {

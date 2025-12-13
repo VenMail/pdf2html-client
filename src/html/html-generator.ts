@@ -4,15 +4,17 @@ import type {
   CSSOptions,
   OutputMetadata
 } from '../types/output.js';
-import type { PDFDocument, PDFPage, PDFGraphicsContent, PDFFormContent, PDFAnnotation } from '../types/pdf.js';
+import type { PDFDocument, PDFPage, PDFGraphicsContent, PDFFormContent, PDFAnnotation, PDFTextContent } from '../types/pdf.js';
 import type { FontMapping } from '../types/fonts.js';
 import { CSSGenerator } from './css-generator.js';
 import { LayoutEngine } from './layout-engine.js';
+import { RegionLayoutAnalyzer } from '../core/region-layout.js';
 
 export class HTMLGenerator {
   private cssGenerator: CSSGenerator;
   private layoutEngine: LayoutEngine;
   private options: HTMLGenerationOptions;
+  private regionLayoutAnalyzer: RegionLayoutAnalyzer;
 
   constructor(
     options: HTMLGenerationOptions,
@@ -21,6 +23,7 @@ export class HTMLGenerator {
     this.options = options;
     this.cssGenerator = new CSSGenerator(options, cssOptions);
     this.layoutEngine = new LayoutEngine(options);
+    this.regionLayoutAnalyzer = new RegionLayoutAnalyzer();
   }
 
   generate(
@@ -98,6 +101,27 @@ export class HTMLGenerator {
     return parts.join('\n');
   }
 
+  private generateSvgTextLayer(page: PDFPage, fontMappings: FontMapping[]): string {
+    const analysis = this.regionLayoutAnalyzer.analyze(page);
+    const out: string[] = [];
+    out.push(
+      `<svg class="pdf-text-layer" width="${page.width}" height="${page.height}" viewBox="0 0 ${page.width} ${page.height}" style="position: absolute; left: 0; top: 0; width: ${page.width}px; height: ${page.height}px; overflow: visible; pointer-events: none;">`
+    );
+
+    for (const region of analysis.regions) {
+      for (const line of region.lines) {
+        const mergedRuns = this.mergeTextRuns(line.items);
+        for (const run of mergedRuns) {
+          const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+          out.push(this.layoutEngine.generateSvgTextElement(run, page.height, fontClass));
+        }
+      }
+    }
+
+    out.push('</svg>');
+    return out.join('\n');
+  }
+
   private generatePageHTML(
     page: PDFPage,
     fontMappings: FontMapping[]
@@ -114,20 +138,40 @@ export class HTMLGenerator {
 
     parts.push(`<div class="${pageClass}" ${pageStyle}>`);
 
-    // Generate text content
-    for (const text of page.content.text) {
-      const fontClass = this.getFontClass(text.fontFamily, fontMappings);
-      parts.push(this.layoutEngine.generateTextElement(text, page.height, fontClass));
+    // Generate graphics (SVG/vector elements) first so text/images can render on top
+    if (page.content.graphics.length > 0) {
+      parts.push(this.generateGraphicsSVG(page.content.graphics, page.width, page.height));
     }
 
-    // Generate images
+    // Generate images (render above vector backgrounds)
     for (const image of page.content.images) {
       parts.push(this.layoutEngine.generateImageElement(image, page.height, this.options.baseUrl));
     }
 
-    // Generate graphics (SVG/vector elements)
-    if (page.content.graphics.length > 0) {
-      parts.push(this.generateGraphicsSVG(page.content.graphics, page.width, page.height));
+    const useSvgText = this.options.preserveLayout && this.options.textRenderMode === 'svg';
+
+    if (useSvgText) {
+      parts.push(this.generateSvgTextLayer(page, fontMappings));
+    } else if (this.options.preserveLayout && this.options.textLayout === 'smart') {
+      parts.push(this.generateSmartText(page, fontMappings));
+    } else {
+      if (this.options.preserveLayout) {
+        const analysis = this.regionLayoutAnalyzer.analyze(page);
+        for (const region of analysis.regions) {
+          for (const line of region.lines) {
+            const mergedRuns = this.mergeTextRuns(line.items);
+            for (const run of mergedRuns) {
+              const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+              parts.push(this.layoutEngine.generateTextElement(run, page.height, fontClass));
+            }
+          }
+        }
+      } else {
+        for (const text of page.content.text) {
+          const fontClass = this.getFontClass(text.fontFamily, fontMappings);
+          parts.push(this.layoutEngine.generateTextElement(text, page.height, fontClass));
+        }
+      }
     }
 
     // Generate forms (if any)
@@ -147,6 +191,81 @@ export class HTMLGenerator {
     parts.push('</div>');
 
     return parts.join('\n');
+  }
+
+  private generateSmartText(page: PDFPage, fontMappings: FontMapping[]): string {
+    const items = page.content.text;
+    if (!items || items.length === 0) return '';
+
+    const nonEmpty = items.filter((t) => t.text && t.text.trim().length > 0);
+    if (nonEmpty.length === 0) return '';
+
+    const analysis = this.regionLayoutAnalyzer.analyze(page);
+
+    const html: string[] = [];
+
+    for (const region of analysis.regions) {
+      const width = Math.max(0, region.rect.width);
+      const height = Math.max(0, region.rect.height);
+
+      if (!region.flowAllowed) {
+        for (const line of region.lines) {
+          const mergedRuns = this.mergeTextRuns(line.items);
+          for (const run of mergedRuns) {
+            const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+            html.push(this.layoutEngine.generateTextElement(run, page.height, fontClass));
+          }
+        }
+        continue;
+      }
+
+      html.push(
+        `<div class="pdf-text-region" style="position: absolute; left: ${region.rect.left}px; top: ${region.rect.top}px; width: ${width}px; height: ${height}px;" data-x="${region.rect.left}" data-top="${region.rect.top}" data-width="${width}" data-height="${height}" data-obstacle-distance="${Math.round(region.nearestObstacleDistance * 100) / 100}">`
+      );
+
+      for (const paragraph of region.paragraphs) {
+        const dominant = paragraph.dominant;
+        const fontClass = this.getFontClass(dominant.fontFamily, fontMappings);
+        const styleParts: string[] = [];
+        styleParts.push('position: relative');
+        styleParts.push('margin: 0');
+        styleParts.push('padding: 0');
+        styleParts.push(this.options.preserveLayout ? 'white-space: pre' : 'white-space: pre-wrap');
+        styleParts.push(`line-height: ${Math.max(1, Math.round(paragraph.lineHeight * 1000) / 1000)}px`);
+        styleParts.push(`font-size: ${dominant.fontSize}px`);
+        styleParts.push(`color: ${dominant.color}`);
+        if (dominant.fontWeight && dominant.fontWeight !== 400) styleParts.push(`font-weight: ${dominant.fontWeight}`);
+        if (dominant.fontStyle && dominant.fontStyle !== 'normal') styleParts.push(`font-style: ${dominant.fontStyle}`);
+
+        const mt = Math.max(0, Math.round(paragraph.gapBefore * 1000) / 1000);
+        if (mt > 0) {
+          styleParts.push(`margin-top: ${mt}px`);
+        }
+
+        const style = styleParts.join('; ');
+
+        const linesHtml: string[] = [];
+        for (let i = 0; i < paragraph.lines.length; i++) {
+          const line = paragraph.lines[i];
+          if (i > 0) linesHtml.push('<br/>');
+          const indent = Math.max(0, Math.round(line.indent * 1000) / 1000);
+          if (indent > 0) {
+            linesHtml.push(`<span style="display: inline-block; margin-left: ${indent}px;"></span>`);
+          }
+          linesHtml.push(this.escapeHtml(line.text));
+        }
+
+        html.push(`<p class="${fontClass}" style="${style}">${linesHtml.join('')}</p>`);
+      }
+
+      html.push('</div>');
+    }
+
+    return html.join('\n');
+  }
+
+  private mergeTextRuns(items: PDFTextContent[]): PDFTextContent[] {
+    return this.regionLayoutAnalyzer.mergeTextRuns(items);
   }
 
   private getFontClass(fontFamily: string, fontMappings: FontMapping[]): string {
@@ -265,6 +384,10 @@ export class HTMLGenerator {
       attrs.push('fill="none"');
     }
 
+    if (graphic.fillRule) {
+      attrs.push(`fill-rule="${graphic.fillRule}"`);
+    }
+
     if (graphic.fillOpacity !== undefined) {
       attrs.push(`fill-opacity="${graphic.fillOpacity}"`);
     }
@@ -314,5 +437,19 @@ export class HTMLGenerator {
       default:
         return '';
     }
+  }
+
+  private escapeHtml(text: string): string {
+    if (typeof document !== 'undefined') {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 }

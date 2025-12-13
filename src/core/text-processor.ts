@@ -20,21 +20,18 @@ export class TextProcessor {
     item: PDFTextContent,
     allItems: PDFTextContent[]
   ): ProcessedTextContent {
+    // Use format information from SmartTextExtractor (already set on item)
     const enhanced: ProcessedTextContent = { 
       ...item,
       fontWeight: item.fontWeight || 400
     };
 
-    // Extract font weight from font name or family
-    const fontName = item.fontInfo?.name;
-    enhanced.fontWeight = this.extractFontWeight(item.fontFamily, fontName);
-
-    // Extract font style
+    // Use font style from SmartTextExtractor
     if (item.fontStyle === 'italic' || item.fontStyle === 'oblique') {
       enhanced.semanticTag = 'em';
     }
 
-    // Detect bold text
+    // Detect bold text using fontWeight from SmartTextExtractor
     if (enhanced.fontWeight && enhanced.fontWeight >= 600) {
       enhanced.semanticTag = enhanced.semanticTag === 'em' ? 'em' : 'strong';
     }
@@ -68,13 +65,16 @@ export class TextProcessor {
     return enhanced;
   }
 
-  private extractFontWeight(
+  // Font weight extraction is now handled by SmartTextExtractor
+  // This method is kept for backward compatibility but should not be used
+  // @ts-expect-error - unused but kept for backward compatibility
+  private _extractFontWeight(
     fontFamily: string,
     fontName?: string | undefined
   ): number {
+    // Fallback only if fontWeight is not already set by SmartTextExtractor
     const source = (fontName || fontFamily).toLowerCase();
 
-    // Check for explicit weight indicators
     if (source.includes('thin') || source.includes('100')) return 100;
     if (source.includes('extralight') || source.includes('200')) return 200;
     if (source.includes('light') || source.includes('300')) return 300;
@@ -85,11 +85,10 @@ export class TextProcessor {
     if (source.includes('extrabold') || source.includes('800')) return 800;
     if (source.includes('black') || source.includes('900')) return 900;
 
-    // Check for common bold patterns
     if (source.includes('bold')) return 700;
     if (source.includes('heavy')) return 900;
 
-    return 400; // Default normal weight
+    return 400;
   }
 
   private detectHeadingLevel(
