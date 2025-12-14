@@ -59,6 +59,10 @@ body {
   color: #333;
   background-color: #fff;
 }
+
+.font-default {
+  font-family: Arial, Helvetica, sans-serif;
+}
 `;
   }
 
@@ -87,19 +91,25 @@ body {
     const rules: string[] = [];
 
     for (const mapping of fontMappings) {
-      const fontClass = this.getFontClass(mapping.detectedFont.name);
       const fallback = mapping.fallbackChain.join(', ');
+      const fontClass = this.getFontClass(mapping.googleFont.family);
 
       rules.push(`
 .${fontClass} {
   font-family: '${mapping.googleFont.family}', ${fallback};
-  font-weight: ${mapping.variant};
-  font-style: ${mapping.detectedFont.style};
 }
 `);
     }
 
     return rules.join('\n');
+  }
+
+  private toFontClassSuffix(name: string): string {
+    return String(name || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+/, '')
+      .replace(/-+$/, '');
   }
 
   private generateBaseStyles(): string {
@@ -211,7 +221,7 @@ ${this.options.responsive ? this.generateResponsiveStyles() : ''}
   }
 
   private getFontClass(fontName: string): string {
-    return `font-${fontName.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+    return `font-${this.toFontClassSuffix(fontName)}`;
   }
 }
 

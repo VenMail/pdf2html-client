@@ -580,7 +580,8 @@ export class PDFiumWrapper {
                     if (adjacent) {
                       const pending = current as unknown as { __pendingSpace?: boolean; __pendingSpaceXEnd?: number };
                       const currentTextLen = (current.text || '').replace(/\s+/g, '').length;
-                      const avgCharW = currentTextLen > 0 ? current.width / currentTextLen : fontSize * 0.5;
+                      const rawAvgCharW = currentTextLen > 0 ? current.width / currentTextLen : fontSize * 0.55;
+                      const avgCharW = Math.max(fontSize * 0.25, Math.min(fontSize * 1.2, rawAvgCharW));
                       const prevChar = (current.text || '').slice(-1);
                       const isPrevAlphaNum = /[A-Za-z0-9]/.test(prevChar);
                       const isNextAlphaNum = /[A-Za-z0-9]/.test(ch);
@@ -621,11 +622,11 @@ export class PDFiumWrapper {
                       if (pending.__pendingSpace) {
                         const baseXEnd = typeof pending.__pendingSpaceXEnd === 'number' ? pending.__pendingSpaceXEnd : xEnd;
                         const effectiveGap = x - baseXEnd;
-                        const spaceGap = Math.max(0.4, avgCharW * 0.28);
+                        const spaceGap = Math.max(0.6, avgCharW * 0.45);
                         const prevAlpha = /[A-Za-z]/.test(prevChar);
                         const nextAlpha = /[A-Za-z]/.test(ch);
                         const inWordAlpha = prevAlpha && nextAlpha && !caseBoundary;
-                        const minWordSpaceGap = Math.max(spaceGap, avgCharW * 0.75);
+                        const minWordSpaceGap = Math.max(spaceGap * 1.6, avgCharW * 1.35);
                         if (
                           effectiveGap > spaceGap &&
                           (!inWordAlpha || effectiveGap > minWordSpaceGap) &&
@@ -660,6 +661,25 @@ export class PDFiumWrapper {
                       const effectiveGap = x - baseXEnd;
                       const high = Math.max(spaceTol + 0.25, fontSize * 0.55);
                       const wordGap = Math.max(fontSize * 0.3, adjacentTol + fontSize * 0.28);
+
+                      const rawAvgCharW = prevTrim.length > 0 ? current.width / Math.max(1, prevTrim.replace(/\s+/g, '').length) : fontSize * 0.55;
+                      const avgCharW = Math.max(fontSize * 0.25, Math.min(fontSize * 1.2, rawAvgCharW));
+                      const attachPunct =
+                        /^[,:;./-]$/.test(nextTrim) &&
+                        /[0-9A-Za-z]$/.test(prevTrim) &&
+                        effectiveGap <= Math.max(wordGap, avgCharW * 0.9);
+
+                      if (attachPunct) {
+                        pending.__pendingSpace = false;
+                        pending.__pendingSpaceXEnd = undefined;
+                        current.text += ch;
+                        current.width = Math.max(current.width, (x + w) - current.x);
+                        const mergedTop = Math.max(current.y + current.height, y + h);
+                        const mergedBottom = Math.min(current.y, y);
+                        current.y = mergedBottom;
+                        current.height = Math.max(0, mergedTop - mergedBottom);
+                        continue;
+                      }
                       const mustSpace = effectiveGap > high;
                       const likelyNoSpace =
                         (prevIsSingleLetter && nextIsSingleLetter) || (prevIsSingleDigit && nextIsSingleDigit);

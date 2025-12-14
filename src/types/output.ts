@@ -30,7 +30,7 @@ export interface HTMLGenerationOptions {
   darkMode: boolean;
   baseUrl?: string;
   imageFormat: 'base64' | 'url';
-  textLayout?: 'absolute' | 'smart';
+  textLayout?: 'absolute' | 'smart' | 'flow';
   textLayoutPasses?: 1 | 2;
   textRenderMode?: 'html' | 'svg';
   textPipeline?: 'legacy' | 'v2';

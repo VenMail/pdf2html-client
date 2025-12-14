@@ -2,6 +2,7 @@ import type { PDFTextContent, PDFImageContent } from '../types/pdf.js';
 import type { HTMLGenerationOptions } from '../types/output.js';
 import { TextProcessor, type ProcessedTextContent } from '../core/text-processor.js';
 import { LayoutAnalyzer } from '../core/layout-analyzer.js';
+import { getDefaultFontMetricsResolver } from '../fonts/font-metrics-resolver.js';
 
 export class LayoutEngine {
   private options: HTMLGenerationOptions;
@@ -14,6 +15,23 @@ export class LayoutEngine {
     this.options = options;
     this.textProcessor = new TextProcessor();
     this.layoutAnalyzer = new LayoutAnalyzer();
+  }
+
+  private getCssFontStack(rawFamily: string): string {
+    const resolver = getDefaultFontMetricsResolver();
+    const match = resolver.resolveByName(rawFamily || '');
+    const family = match.record.family;
+    const quoted = family.includes(' ') ? `'${family}'` : family;
+
+    if (match.record.category === 'serif') {
+      return `${quoted}, 'Times New Roman', Times, serif`;
+    }
+
+    if (match.record.category === 'monospace') {
+      return `${quoted}, 'Courier New', Courier, monospace`;
+    }
+
+    return `${quoted}, Arial, Helvetica, sans-serif`;
   }
 
   resetCssCaches(): void {
@@ -64,10 +82,14 @@ export class LayoutEngine {
   generateInlineTextSpan(text: PDFTextContent, fontClass: string): string {
     const processed = this.textProcessor.processTextContent([text])[0];
 
+    const includeFontFamily = !fontClass || fontClass === 'font-default';
     const visualStyle: Record<string, string> = {
       'font-size': `${processed.fontSize}px`,
       color: processed.color
     };
+    if (includeFontFamily) {
+      visualStyle['font-family'] = this.getCssFontStack(processed.fontFamily);
+    }
 
     if (processed.fontWeight && processed.fontWeight !== 400) {
       visualStyle['font-weight'] = String(processed.fontWeight);
@@ -114,13 +136,18 @@ export class LayoutEngine {
     }
   ): string {
     const coords = options?.coordsOverride ?? this.transformCoordinates(text.x, text.y, pageHeight, text.height);
+    const lineHeightPx = Math.max(1, Math.round(Math.max(text.height, text.fontSize * 1.15)));
 
     // Build style attributes
     const positionalStyleParts: string[] = [];
+    const includeFontFamily = !fontClass || fontClass === 'font-default';
     const visualStyle: Record<string, string> = {
       'font-size': `${text.fontSize}px`,
       color: text.color
     };
+    if (includeFontFamily) {
+      visualStyle['font-family'] = this.getCssFontStack(text.fontFamily);
+    }
 
     if (text.fontWeight && text.fontWeight !== 400) {
       visualStyle['font-weight'] = String(text.fontWeight);
@@ -140,7 +167,7 @@ export class LayoutEngine {
       positionalStyleParts.push(`position: absolute`);
       positionalStyleParts.push(`left: ${coords.x}px`);
       positionalStyleParts.push(`top: ${coords.y}px`);
-      positionalStyleParts.push(`line-height: ${Math.max(1, Math.round(text.height))}px`);
+      positionalStyleParts.push(`line-height: ${lineHeightPx}px`);
       if (typeof text.rotation === 'number' && Math.abs(text.rotation) > 0.01) {
         positionalStyleParts.push(`transform: rotate(${text.rotation}deg)`);
         positionalStyleParts.push(`transform-origin: left top`);

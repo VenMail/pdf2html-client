@@ -9,6 +9,8 @@ import type { FontMapping } from '../types/fonts.js';
 import { CSSGenerator } from './css-generator.js';
 import { LayoutEngine } from './layout-engine.js';
 import { RegionLayoutAnalyzer } from '../core/region-layout.js';
+import { SemanticHTMLGenerator } from './semantic-html-generator.js';
+import { normalizeFontName } from '../fonts/font-name-normalizer.js';
 
 type LineToken =
   | { type: 'text'; text: string; sample: PDFTextContent }
@@ -19,6 +21,7 @@ export class HTMLGenerator {
   private layoutEngine: LayoutEngine;
   private options: HTMLGenerationOptions;
   private regionLayoutAnalyzer: RegionLayoutAnalyzer;
+  private semanticHtmlGenerator: SemanticHTMLGenerator;
   private extraCssRules: string[] = [];
   private flowStyleClassByKey: Map<string, string> = new Map();
   private absGapCssInjected: boolean = false;
@@ -34,6 +37,7 @@ export class HTMLGenerator {
       textPipeline: options.textPipeline ?? 'legacy',
       textClassifierProfile: options.textClassifierProfile
     });
+    this.semanticHtmlGenerator = new SemanticHTMLGenerator();
   }
 
   generate(
@@ -169,6 +173,13 @@ export class HTMLGenerator {
 
     if (useSvgText) {
       parts.push(this.generateSvgTextLayer(page, fontMappings));
+    } else if (!this.options.preserveLayout && this.options.textLayout === 'flow') {
+      const semantic = this.semanticHtmlGenerator.generateSemanticHTML(
+        page,
+        fontMappings,
+        this.regionLayoutAnalyzer
+      );
+      parts.push(semantic);
     } else if (this.options.preserveLayout && this.options.textLayout === 'smart') {
       parts.push(this.generateSmartText(page, fontMappings));
     } else {
@@ -427,12 +438,27 @@ export class HTMLGenerator {
     return out;
   }
 
+  private toFontClassSuffix(name: string): string {
+    return String(name || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+/, '')
+      .replace(/-+$/, '');
+  }
+
   private getFontClass(fontFamily: string, fontMappings: FontMapping[]): string {
-    const mapping = fontMappings.find(m => m.detectedFont.family === fontFamily);
-    if (mapping) {
-      return `font-${mapping.googleFont.family.toLowerCase().replace(/\s+/g, '-')}`;
-    }
-    return 'font-default';
+    const key = normalizeFontName(fontFamily || '').family;
+
+    const mapping = fontMappings.find((m) => {
+      const famKey = normalizeFontName(m.detectedFont.family || '').family;
+      const nameKey = normalizeFontName(m.detectedFont.name || '').family;
+      return (key && famKey === key) || (key && nameKey === key) || m.detectedFont.family === fontFamily;
+    });
+
+    if (!mapping) return 'font-default';
+
+    // Must match CSSGenerator's class naming (based on googleFont.family).
+    return `font-${this.toFontClassSuffix(mapping.googleFont.family)}`;
   }
 
   private generateFormElement(form: PDFFormContent, pageHeight: number): string {

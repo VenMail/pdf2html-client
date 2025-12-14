@@ -1,80 +1,76 @@
 AGENT COPY
-BOARDINGPASS Record Locator: GCOXAX
+Record Locator: GCOXAX
+BOARDINGPASS
 eTicket: 0712156116699
-Seq No: 00013
+SeqNo: 00013
 LOS ADD
-MRS DIAYNE NKECHINYELU
-PATA Murtala Muhammed International Airportto Addis Ababa Bole
-O,
+MRSDIAYNENKECHINYELU
+OPATA Murtala Muhammed International Airport toAddis Ababa Bole
+,
 International
 Flight Terminal/Gate Boarding Time Seat
-ET 902 21: 15 27B
-Tue Nov182025 Departure Time: 22:00
-,,
+ET 902 2115 27B
+:
+Tue Nov182025 Departure Time:22:00 ,,
 Boarding Zone
 Checked Bags:
 4
 Pieces Checked Weight Unchecked Weight Priority Boarding
-For flight status, please check with us at https://www.ethiopianairlines.com/aa/book/booking/flight-status or call: +251 116 179900
+Forflight status, please check withusathttps://www.ethiopianairlines.com/aa/book/booking/flight status -
+orcall: +251116179900
 
-IMPORTANT NOTES
-The Boarding Gate closes 15 minutes before departure.Dont forget about the Security Control '
-at the airportas wellas Customs and Immigration Formalitiesif you takean international flight. At the airport, verify the departure gate. Pleasebe awareof your timing. At the boarding gate youare requestedto provide both partsof this boarding passas wellas
-,
-your passport and entry documents for your destination (transit) country.
-PASSENGER COPY
-BOARDINGPASS Record Locator: GCOXAX
+IMPORTANTNOTES
+The Boarding Gate closes 15 minutes beforedeparture.Don't forgetabout theSecurity Control at theairportas wellas Customsand Immigrati onFormalities ifyoutakeaninternationalflight. At theairport, verifythedeparturegate. Pleasebe aware ofyourtiming. Attheboardinggate, youare requested toprovideboth parts ofthis boardingpass aswellas yourpassportandentrydocuments foryourdestination (transit) country.
+PASSENGERCOPY
+Record Locator: GCOXAX BOARDINGPASS
 eTicket: 0712156116699
-Seq No: 00013
+SeqNo: 00013
 LOS ADD
-MRS DIAYNE NKECHINYELU
-OPATA Murtala Muhammed International Airportto Addis Ababa Bole
-,
+MRSDIAYNENKECHINYELU
+OPATA Murtala Muhammed International Airport toAddis Ababa, Bole
 International
-Flight Terminal/Gate Boarding Time Seat ET 902 21: 15 27B Tue Nov182025 Departure Time: 22:00 ,,
+Flight Terminal/Gate Boarding Time Seat ET 902 21: 15 27B Tue, Nov18, 2025 Departure Time:22:00
 Boarding Zone
 Checked Bags:
 4
 Pieces Checked Weight Unchecked Weight Priority Boarding
-For flight status, please check with us at https://www.ethiopianairlines.com/aa/book/booking/flight-status or call: +251 116 179900
+Forflight status, please check withusathttps://www.ethiopianairlines.com/aa/book/booking/flight status l: - orcal +251116179900
 
 AGENT COPY
-BOARDINGPASS Record Locator: GCOXAX
+Record Locator: GCOXAX
+BOARDINGPASS
 eTicket: 0712156116699
-Seq No: 00102
+SeqNo: 00102
 ADD CPT
-MRS DIAYNE NKECHINYELU
-PATA Addis Ababa Bole Internationalto Cape Town
-O,
+MRSDIAYNENKECHINYELU
+OPATA Addis Ababa Bole International toCape Town
+,
 International
 Flight Terminal/Gate Boarding Time Seat
-ET 847 2/A807:30 35K
-Wed Nov192025 Departure Time: 08: 15
+ET 847 2/A80730 35K
+:
+Wed Nov192025 Departure Time:08:15
 ,,
 Boarding Zone
 Checked Bags:
 3
 Pieces Checked Weight Unchecked Weight Priority Boarding
-For flight status, please check with us at https://www.ethiopianairlines.com/aa/book/booking/flight-status or call: +251 116 179900
+Forflight status, please check withusathttps://www.ethiopianairlines.com/aa/book/booking/flight status -
+orcall: +251116179900
 
-IMPORTANT NOTES
-The Boarding Gate closes 15 minutes before departure.Dont forget about the Security Control '
-at the airportas wellas Customs and Immigration Formalitiesif you takean international flight. At the airport, verify the departure gate. Pleasebe awareof your timing. At the boarding gate youare requestedto provide both partsof this boarding passas wellas
-,
-your passport and entry documents for your destination (transit) country.
-PASSENGER COPY
-BOARDINGPASS Record Locator: GCOXAX
+IMPORTANTNOTES
+The Boarding Gate closes 15 minutes beforedeparture.Don't forgetabout theSecurity Control at theairportas wellas Customsand Immigrati onFormalities ifyoutakeaninternationalflight. At theairport, verifythedeparturegate. Pleasebe aware ofyourtiming. Attheboardinggate, youare requested toprovideboth parts ofthis boardingpass aswellas yourpassportandentrydocuments foryourdestination (transit) country.
+PASSENGERCOPY
+Record Locator: GCOXAX BOARDINGPASS
 eTicket: 0712156116699
-Seq No: 00102
+SeqNo: 00102
 ADD CPT
-MRS DIAYNE NKECHINYELU
-OPATA Addis Ababa Bole Internationalto Cape Town
-,
+MRSDIAYNENKECHINYELU
+OPATA Addis Ababa, Bole International toCape Town
 International
-Flight Terminal/Gate Boarding Time Seat ET 847 2/A807:30 35K Wed Nov192025 Departure Time: 08: 15
-,,
+Flight Terminal/Gate Boarding Time Seat ET 847 2/A807:30 35K Wed, Nov19, 2025 Departure Time:08:15
 Boarding Zone
 Checked Bags:
 3
 Pieces Checked Weight Unchecked Weight Priority Boarding
-For flight status, please check with us at https://www.ethiopianairlines.com/aa/book/booking/flight-status or call: +251 116 179900
+Forflight status, please check withusathttps://www.ethiopianairlines.com/aa/book/booking/flight status l: - orcal +251116179900

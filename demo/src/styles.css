@@ -54,6 +54,28 @@ body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
+.conversion-options {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.conversion-option {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 14px;
+  color: #333;
+  user-select: none;
+}
+
+.conversion-option input {
+  margin: 0;
+}
+
 .output-section {
   background: white;
   border-radius: 8px;

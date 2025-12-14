@@ -12,6 +12,7 @@ function App() {
   const [progress, setProgress] = useState<ConversionProgress | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [outputMode, setOutputMode] = useState<'layout' | 'semantic'>('layout');
 
   const handleFileUpload = async (file: File) => {
     setPdfFile(file);
@@ -35,10 +36,18 @@ function App() {
         enableFontMapping: true,
         htmlOptions: {
           format: 'html+inline-css',
-          preserveLayout: true,
+          preserveLayout: outputMode === 'layout',
           responsive: true,
           darkMode: false,
-          imageFormat: 'base64'
+          imageFormat: 'base64',
+          ...(outputMode === 'semantic'
+            ? {
+                textLayout: 'flow',
+                includeExtractedText: true,
+                textPipeline: 'v2',
+                textClassifierProfile: 'latin-default'
+              }
+            : {})
         }
       });
 
@@ -63,6 +72,30 @@ function App() {
 
       <main className="app-main">
         <div className="upload-section">
+          <div className="conversion-options">
+            <label className="conversion-option">
+              <input
+                type="radio"
+                name="outputMode"
+                value="layout"
+                checked={outputMode === 'layout'}
+                onChange={() => setOutputMode('layout')}
+                disabled={loading}
+              />
+              Preserve layout
+            </label>
+            <label className="conversion-option">
+              <input
+                type="radio"
+                name="outputMode"
+                value="semantic"
+                checked={outputMode === 'semantic'}
+                onChange={() => setOutputMode('semantic')}
+                disabled={loading}
+              />
+              Semantic flow
+            </label>
+          </div>
           <PDFUploader onFileSelect={handleFileUpload} disabled={loading} />
           {error && <div className="error-message">{error}</div>}
           {progress && (

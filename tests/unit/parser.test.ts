@@ -5,7 +5,7 @@ describe('PDFParser', () => {
   let parser: PDFParser;
 
   beforeEach(() => {
-    parser = new PDFParser('auto');
+    parser = new PDFParser('unpdf');
   });
 
   afterEach(() => {
@@ -33,14 +33,10 @@ describe('PDFParser', () => {
 
   it('should handle parallel parsing', async () => {
     const mockPdfData = new ArrayBuffer(0);
-    
-    try {
-      const document = await parser.parseParallel(mockPdfData, undefined, 2);
-      expect(document).toBeDefined();
-    } catch (error) {
-      // Expected to fail with empty data
-      expect(error).toBeDefined();
-    }
+
+    await expect(parser.parseParallel(mockPdfData, undefined, 2)).rejects.toThrow(
+      'parseParallel is not supported for UnPDF backend'
+    );
   });
 });
 

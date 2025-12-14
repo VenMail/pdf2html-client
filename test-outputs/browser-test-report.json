@@ -1,27 +1,17 @@
 {
-  "timestamp": "2025-12-14T05:41:36.228Z",
+  "timestamp": "2025-12-14T20:35:04.189Z",
   "summary": {
-    "total": 3,
-    "passed": 3,
+    "total": 1,
+    "passed": 1,
     "failed": 0,
     "skipped": 0,
-    "duration": 31008
+    "duration": 2748
   },
   "tests": [
     {
-      "title": "should convert boarding_pass.pdf with v2 classifier (smoke)",
-      "status": "passed",
-      "duration": 1782
-    },
-    {
       "title": "should convert boarding_pass.pdf with high fidelity",
       "status": "passed",
-      "duration": 28468
-    },
-    {
-      "title": "should preserve layout structure for boarding pass",
-      "status": "passed",
-      "duration": 758
+      "duration": 2748
     }
   ]
 }

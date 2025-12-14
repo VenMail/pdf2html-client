@@ -62,6 +62,26 @@ export class RegionLayoutAnalyzer {
       let current: { type: 'text'; text: string; sample: PDFTextContent } | null = null;
       let pendingSpace = false;
 
+      const isDigit = (s: string): boolean => /\d/.test((s || '').trim());
+      const isNumericSeparator = (s: string): boolean => /^(?:[:.,/\-–—])$/.test((s || '').trim());
+      const isClosingPunct = (s: string): boolean => /^[\u2019\u201D'"`.,;:!?)}\]]+$/.test((s || '').trim());
+      const isOpeningPunct = (s: string): boolean => /^(?:[\u2018\u201C'"`({]|\[)+$/.test((s || '').trim());
+      const shouldForceNumericJoin = (i: number): boolean => {
+        const g = glyphs[i];
+        if (!g) return false;
+        const prev = i > 0 ? glyphs[i - 1] : undefined;
+        const prev2 = i > 1 ? glyphs[i - 2] : undefined;
+        const next = i + 1 < glyphs.length ? glyphs[i + 1] : undefined;
+
+        // Case A: joining digit -> separator when separator is between digits.
+        if (prev && isDigit(prev.text) && isNumericSeparator(g.text) && next && isDigit(next.text)) return true;
+
+        // Case B: joining separator -> digit when separator is between digits.
+        if (prev && isNumericSeparator(prev.text) && prev2 && isDigit(prev2.text) && isDigit(g.text)) return true;
+
+        return false;
+      };
+
       for (let i = 0; i < glyphs.length; i++) {
         const g = glyphs[i];
         const source = g.source;
@@ -76,6 +96,17 @@ export class RegionLayoutAnalyzer {
         const prev = glyphs[i - 1];
         const d = classifier.classify(prev, g, model, ctx);
         pendingSpace = d.type === 'space';
+        if (shouldForceNumericJoin(i)) pendingSpace = false;
+
+        // Punctuation attachment:
+        // - no space before closing punctuation (e.g. "word ." -> "word.")
+        // - no space after opening punctuation (e.g. "( word" -> "(word")
+        // Keep this conservative by only overriding when the classifier asked for a space
+        // and the gap is not excessively large.
+        if (pendingSpace && d.gapByChar <= 0.95) {
+          if (isClosingPunct(g.text)) pendingSpace = false;
+          else if (isOpeningPunct(prev.text)) pendingSpace = false;
+        }
 
         const prevKey = styleKey(current.sample);
         const nextKey = styleKey(source);
@@ -256,7 +287,7 @@ export class RegionLayoutAnalyzer {
 
   private groupIntoLines(items: PDFTextContent[], pageHeight: number, medianHeight: number): TextLine[] {
     const sorted = [...items].sort((a, b) => {
-      const yDiff = b.y - a.y;
+      const yDiff = (b.y + b.height) - (a.y + a.height);
       if (Math.abs(yDiff) > 0.25) return yDiff;
       return a.x - b.x;
     });
@@ -264,27 +295,29 @@ export class RegionLayoutAnalyzer {
     const lines: Array<{ items: PDFTextContent[]; ySum: number; yCount: number; height: number; fontSizeSum: number; fontMap: Map<string, number> }> = [];
 
     for (const item of sorted) {
+      const anchorY = item.y + item.height;
       const baseTol = Math.max(1.5, Math.min(medianHeight, Math.max(1, item.height)) * 0.45);
-      const isTiny = Math.max(1, item.height) < Math.max(2, medianHeight * 0.6);
+      const isTiny = Math.max(1, item.height) <= Math.max(2, medianHeight * 0.6);
       const isPunctOrQuote = item.text.length <= 2 && /[\u2018\u2019\u201C\u201D'"`.,;:!?()[\]{}]/.test(item.text);
-      const tol = (isTiny && isPunctOrQuote)
+      const punctEligible = isPunctOrQuote && Math.max(1, item.height) <= Math.max(3, medianHeight * 0.8);
+      const tol = (punctEligible || (isTiny && isPunctOrQuote))
         ? Math.max(baseTol, Math.max(2, medianHeight * 0.85))
         : baseTol;
       let target: (typeof lines)[number] | undefined;
 
       for (const line of lines) {
         const yAvg = line.ySum / Math.max(1, line.yCount);
-        if (Math.abs(yAvg - item.y) <= tol) {
+        if (Math.abs(yAvg - anchorY) <= tol) {
           target = line;
           break;
         }
       }
 
       if (!target) {
-        lines.push({ items: [item], ySum: item.y, yCount: 1, height: item.height, fontSizeSum: item.fontSize, fontMap: new Map([[item.fontFamily, 1]]) });
+        lines.push({ items: [item], ySum: anchorY, yCount: 1, height: item.height, fontSizeSum: item.fontSize, fontMap: new Map([[item.fontFamily, 1]]) });
       } else {
         target.items.push(item);
-        target.ySum += item.y;
+        target.ySum += anchorY;
         target.yCount += 1;
         target.height = Math.max(target.height, item.height);
         target.fontSizeSum += item.fontSize;
@@ -469,7 +502,7 @@ export class RegionLayoutAnalyzer {
           top: line.rect.top,
           gapBefore: 0,
           dominant: line.items[0],
-          lineHeight: Math.max(1, Math.round(line.height))
+          lineHeight: Math.max(1, Math.round(Math.max(line.height, line.avgFontSize * 1.25)))
         };
         paragraphs.push(current);
         current.lines.push({ text: lineTextRaw, indent, sourceLine: line });
@@ -489,7 +522,7 @@ export class RegionLayoutAnalyzer {
           top: line.rect.top,
           gapBefore: Math.max(0, Math.round(gap * 1000) / 1000),
           dominant: line.items[0],
-          lineHeight: Math.max(1, Math.round(line.height))
+          lineHeight: Math.max(1, Math.round(Math.max(line.height, line.avgFontSize * 1.25)))
         };
         paragraphs.push(current);
         current.lines.push({ text: lineTextRaw, indent, sourceLine: line });

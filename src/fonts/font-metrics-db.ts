@@ -1,0 +1,426 @@
+import type { FontMetrics } from '../types/fonts.js';
+
+export type FontCategory = 'sans-serif' | 'serif' | 'monospace' | 'script' | 'display' | 'symbol' | 'other';
+
+export type FontMetricsRecord = {
+  id: string;
+  family: string;
+  category: FontCategory;
+  aliases: string[];
+  metrics: FontMetrics;
+  spaceWidth?: number;
+  averageCharWidth?: number;
+  charWidthOverrides?: Record<string, number>;
+};
+
+const U = 1000;
+
+const BASE: FontMetricsRecord[] = [
+  {
+    id: 'arial',
+    family: 'Arial',
+    category: 'sans-serif',
+    aliases: [
+      'arial',
+      'arialmt',
+      'arial-boldmt',
+      'arial bold mt',
+      'arialboldmt',
+      'arial-italicmt',
+      'arial italic mt',
+      'arialitalicmt',
+      'arial-bolditalicmt',
+      'arial bold italic mt',
+      'arialbolditalicmt',
+      'arial unicode ms',
+      'system',
+      'system ui',
+      'system-ui',
+      'helvetica-bold',
+      'helvetica bold',
+      'helveticabold',
+      'helvetica-boldoblique',
+      'helvetica bold oblique',
+      'helveticaboldoblique',
+      'helvetica-oblique',
+      'helvetica oblique',
+      'helveticaoblique',
+      'helvetica-italic',
+      'helvetica italic',
+      'helveticaitalic',
+      'dejavu sans',
+      'dejavusans',
+      'dejavu sans condensed',
+      'dejavusanscondensed',
+      'liberation sans',
+      'liberationsans',
+      'liberation sans narrow',
+      'liberationsansnarrow',
+      'roboto',
+      'inter',
+      'noto sans',
+      'notosans',
+      'open sans',
+      'opensans',
+      'nimbus sans',
+      'nimbussans',
+      'nimbus sans l',
+      'nimbussansl',
+      'nimbus san l',
+      'nimbussanl',
+      'nimbus san l regu',
+      'nimbus san l bd',
+      'nimbus san l it',
+      'nimbus san l bi',
+      'nimbussanl regu',
+      'nimbussanl bd',
+      'nimbussanl it',
+      'nimbussanl bi',
+      'nimbus sans l regular',
+      'nimbus sans l bold',
+      'nimbus sans l italic',
+      'nimbus sans l bold italic',
+      'helvetica',
+      'helvetica neue',
+      'helveticaneue',
+      'helvetica neue lt',
+      'helveticaneuelt',
+      'helvetica neue lt std',
+      'helvetica neue ltstd',
+      'helveticaneueltstd',
+      'helvetica lt',
+      'helveticalt',
+      'segoe ui',
+      'segoeui',
+      'segoeui semibold',
+      'segoe ui semibold',
+      'segoeui bold',
+      'segoe ui bold',
+      'tahoma',
+      'verdana',
+      'geneva',
+      'helveticaneue'
+    ],
+    metrics: {
+      ascent: 905,
+      descent: 212,
+      capHeight: 716,
+      xHeight: 523,
+      averageWidth: 515,
+      maxWidth: 1015,
+      unitsPerEm: U
+    },
+    spaceWidth: 278,
+    averageCharWidth: 515,
+    charWidthOverrides: {
+      ' ': 278,
+      ':': 278,
+      '.': 278,
+      ',': 278,
+      '-': 333,
+      '\u2019': 180,
+      "'": 180,
+      '"': 355,
+      '\u201C': 355,
+      '\u201D': 355
+    }
+  },
+  {
+    id: 'times_new_roman',
+    family: 'Times New Roman',
+    category: 'serif',
+    aliases: [
+      'times new roman',
+      'timesnewroman',
+      'timesnewromanps',
+      'timesnewromanpsmt',
+      'timesnewromanps-boldmt',
+      'times new roman ps bold mt',
+      'timesnewromanpsboldmt',
+      'timesnewromanps-italicmt',
+      'times new roman ps italic mt',
+      'timesnewromanpsitalicmt',
+      'timesnewromanps-bolditalicmt',
+      'times new roman ps bold italic mt',
+      'timesnewromanpsbolditalicmt',
+      'times',
+      'times roman',
+      'times-roman',
+      'timesroman',
+      'times-bold',
+      'times bold',
+      'timesbold',
+      'times-italic',
+      'times italic',
+      'timesitalic',
+      'times-bolditalic',
+      'times bolditalic',
+      'timesbolditalic',
+      'times bold italic',
+      'times-bold-italic',
+      'dejavu serif',
+      'dejavuserif',
+      'liberation serif',
+      'liberationserif',
+      'nimbus roman',
+      'nimbusroman',
+      'nimbus roman no9 l',
+      'nimbusromno9l',
+      'nimbus rom no9 l',
+      'nimbusromno9 l',
+      'nimbus rom no9 l regu',
+      'nimbus rom no9 l bd',
+      'nimbus rom no9 l it',
+      'nimbus rom no9 l bi',
+      'nimbusromno9l regu',
+      'nimbusromno9l bd',
+      'nimbusromno9l it',
+      'nimbusromno9l bi',
+      'nimbus roman no9 l regular',
+      'nimbus roman no9 l bold',
+      'nimbus roman no9 l italic',
+      'nimbus roman no9 l bold italic',
+      'georgia',
+      'palatino',
+      'palatino linotype',
+      'book antiqua',
+      'garamond',
+      'times new roman ps'
+    ],
+    metrics: {
+      ascent: 891,
+      descent: 216,
+      capHeight: 662,
+      xHeight: 450,
+      averageWidth: 500,
+      maxWidth: 1000,
+      unitsPerEm: U
+    },
+    spaceWidth: 250,
+    averageCharWidth: 500,
+    charWidthOverrides: {
+      ' ': 250,
+      ':': 278,
+      '.': 250,
+      ',': 250,
+      '-': 333,
+      '\u2019': 180,
+      "'": 180,
+      '"': 408,
+      '\u201C': 408,
+      '\u201D': 408
+    }
+  },
+  {
+    id: 'courier_new',
+    family: 'Courier New',
+    category: 'monospace',
+    aliases: [
+      'courier new',
+      'couriernew',
+      'courier',
+      'couriernewps-boldmt',
+      'courier new ps bold mt',
+      'couriernewpsboldmt',
+      'couriernewps-italicmt',
+      'courier new ps italic mt',
+      'couriernewpsitalicmt',
+      'couriernewps-bolditalicmt',
+      'courier new ps bold italic mt',
+      'couriernewpsbolditalicmt',
+      'courier-bold',
+      'courier bold',
+      'courierbold',
+      'courier-oblique',
+      'courier oblique',
+      'courieroblique',
+      'courier-boldoblique',
+      'courier boldoblique',
+      'courierboldoblique',
+      'courier bold oblique',
+      'couriernewpsmt',
+      'couriernew psmt',
+      'courier new psmt',
+      'courier-psmt',
+      'dejavu sans mono',
+      'dejavusansmono',
+      'liberation mono',
+      'liberationmono',
+      'nimbus mono',
+      'nimbusmono',
+      'nimbus mono l',
+      'nimbusmonol',
+      'nimbus mono l regular',
+      'nimbus mono l bold',
+      'nimbus mono l italic',
+      'nimbus mono l bold italic',
+      'liberation mono',
+      'nimbus mono'
+    ],
+    metrics: {
+      ascent: 832,
+      descent: 300,
+      capHeight: 660,
+      xHeight: 450,
+      averageWidth: 600,
+      maxWidth: 600,
+      unitsPerEm: U
+    },
+    spaceWidth: 600,
+    averageCharWidth: 600,
+    charWidthOverrides: {
+      ' ': 600
+    }
+  },
+  {
+    id: 'calibri',
+    family: 'Calibri',
+    category: 'sans-serif',
+    aliases: [
+      'calibri',
+      'calibriui',
+      'segoe ui',
+      'segoeui',
+      'segoe',
+      'arial narrow',
+      'arialnarrow',
+      'frutiger',
+      'univers'
+    ],
+    metrics: {
+      ascent: 900,
+      descent: 220,
+      capHeight: 710,
+      xHeight: 520,
+      averageWidth: 520,
+      maxWidth: 1050,
+      unitsPerEm: U
+    },
+    spaceWidth: 270,
+    averageCharWidth: 520,
+    charWidthOverrides: {
+      ' ': 270,
+      ':': 278,
+      '.': 270,
+      ',': 270,
+      '-': 333
+    }
+  },
+  {
+    id: 'cambria',
+    family: 'Cambria',
+    category: 'serif',
+    aliases: ['cambria', 'cambriai', 'constantia', 'minion pro', 'minionpro'],
+    metrics: {
+      ascent: 895,
+      descent: 215,
+      capHeight: 680,
+      xHeight: 465,
+      averageWidth: 505,
+      maxWidth: 1020,
+      unitsPerEm: U
+    },
+    spaceWidth: 250,
+    averageCharWidth: 505,
+    charWidthOverrides: {
+      ' ': 250
+    }
+  },
+  {
+    id: 'symbol',
+    family: 'Symbol',
+    category: 'symbol',
+    aliases: [
+      'symbol',
+      'zapfdingbats',
+      'zapf dingbats',
+      'dingbats',
+      'wingdings',
+      'wingdings 2',
+      'wingdings 3'
+    ],
+    metrics: {
+      ascent: 820,
+      descent: 210,
+      capHeight: 700,
+      xHeight: 500,
+      averageWidth: 600,
+      maxWidth: 1000,
+      unitsPerEm: U
+    },
+    spaceWidth: 250,
+    averageCharWidth: 600,
+    charWidthOverrides: {
+      ' ': 250,
+      '•': 500,
+      '●': 500,
+      '○': 500,
+      '▪': 400,
+      '▫': 400,
+      '■': 500,
+      '□': 500,
+      '◆': 500,
+      '◇': 500
+    }
+  },
+  {
+    id: 'default_sans',
+    family: 'sans-serif',
+    category: 'sans-serif',
+    aliases: ['sans', 'sans serif', 'sans-serif', 'default sans'],
+    metrics: {
+      ascent: 900,
+      descent: 220,
+      capHeight: 710,
+      xHeight: 520,
+      averageWidth: 520,
+      maxWidth: 1050,
+      unitsPerEm: U
+    },
+    spaceWidth: 270,
+    averageCharWidth: 520
+  },
+  {
+    id: 'default_serif',
+    family: 'serif',
+    category: 'serif',
+    aliases: ['serif', 'default serif'],
+    metrics: {
+      ascent: 890,
+      descent: 220,
+      capHeight: 670,
+      xHeight: 460,
+      averageWidth: 500,
+      maxWidth: 1000,
+      unitsPerEm: U
+    },
+    spaceWidth: 250,
+    averageCharWidth: 500
+  },
+  {
+    id: 'default_mono',
+    family: 'monospace',
+    category: 'monospace',
+    aliases: ['mono', 'monospace', 'default mono'],
+    metrics: {
+      ascent: 830,
+      descent: 300,
+      capHeight: 660,
+      xHeight: 450,
+      averageWidth: 600,
+      maxWidth: 600,
+      unitsPerEm: U
+    },
+    spaceWidth: 600,
+    averageCharWidth: 600
+  }
+];
+
+export function getBuiltInFontMetricsDb(): FontMetricsRecord[] {
+  return BASE.map((r) => ({
+    ...r,
+    aliases: [...r.aliases],
+    metrics: { ...r.metrics },
+    charWidthOverrides: r.charWidthOverrides ? { ...r.charWidthOverrides } : undefined
+  }));
+}

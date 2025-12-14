@@ -1,5 +1,6 @@
 import type { DocumentStatistics } from './types.js';
 import type { PDFTextContent } from '../../types/pdf.js';
+import { getDefaultFontMetricsResolver } from '../../fonts/font-metrics-resolver.js';
 
 export type LineGapModel = {
   estimatedCharWidth: number;
@@ -80,7 +81,7 @@ export class StatisticalSpaceDetector {
 
     // If both sides are multi-character tokens, treat even small gaps as likely word breaks.
     // This is language-agnostic and prevents regressions like AGENTCOPY / RecordLocator.
-    const multiToken = prevText.length >= 2 && nextText.length >= 2;
+    const multiToken = prevText.length >= 3 && nextText.length >= 3;
     const alphaLike = /[A-Za-z]$/.test(prevText) && /^[A-Za-z]/.test(nextText);
     if (multiToken && alphaLike) {
       effectiveThreshold = Math.min(effectiveThreshold, 0.32);
@@ -98,6 +99,12 @@ export class StatisticalSpaceDetector {
     const candidates: number[] = [];
     if (prevLen >= 1) candidates.push(prev.width / prevLen);
     if (nextLen >= 1) candidates.push(next.width / nextLen);
+
+    const resolver = getDefaultFontMetricsResolver();
+    const prevMatch = resolver.resolveByName(prev.fontFamily || '');
+    const nextMatch = resolver.resolveByName(next.fontFamily || '');
+    candidates.push(resolver.estimateCharWidthPx('n', prevMatch.record, avgFontSize));
+    candidates.push(resolver.estimateCharWidthPx('n', nextMatch.record, avgFontSize));
     candidates.push(avgFontSize * 0.55);
 
     const filtered = candidates
@@ -112,13 +119,27 @@ export class StatisticalSpaceDetector {
     if (!items || items.length === 0) return Math.max(1, this.stats.medianFontSize) * 0.55;
     const widths: number[] = [];
     const avgFontSize = items.reduce((acc, t) => acc + Math.max(1, t.fontSize || 0), 0) / Math.max(1, items.length);
+
+    const resolver = getDefaultFontMetricsResolver();
+    const predictedByStyle = new Map<string, number>();
     for (const item of items) {
       const t = (item.text || '').replace(/\s+/g, '');
       const len = t.length;
       if (len >= 1 && item.width > 0) {
-        widths.push(item.width / len);
+        const v = item.width / len;
+        const clamped = Math.max(avgFontSize * 0.25, Math.min(avgFontSize * 1.2, v));
+        widths.push(clamped);
+      }
+
+      const styleKey = `${item.fontFamily}|${Math.round(Math.max(1, item.fontSize || avgFontSize))}`;
+      if (!predictedByStyle.has(styleKey)) {
+        const match = resolver.resolveByName(item.fontFamily || '');
+        const px = resolver.estimateCharWidthPx('n', match.record, Math.max(1, item.fontSize || avgFontSize));
+        if (Number.isFinite(px) && px > 0) predictedByStyle.set(styleKey, px);
       }
     }
+
+    for (const v of predictedByStyle.values()) widths.push(v);
     if (widths.length === 0) return Math.max(1, avgFontSize) * 0.55;
     widths.sort((a, b) => a - b);
     const mid = Math.floor(widths.length / 2);

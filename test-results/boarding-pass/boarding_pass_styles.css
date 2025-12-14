@@ -12,6 +12,10 @@ body {
   background-color: #fff;
 }
 
+.font-default {
+  font-family: Arial, Helvetica, sans-serif;
+}
+
 
 
 
@@ -92,63 +96,60 @@ body {
 
 .pdf-abs-style-0 {
   color: rgba(0, 0, 0, 1);
+  font-family: sans-serif, Arial, Helvetica, sans-serif;
   font-size: 8px;
   font-weight: 520;
 }
 
 .pdf-abs-style-1 {
   color: rgba(0, 0, 0, 1);
-  font-size: 8px;
+  font-family: sans-serif, Arial, Helvetica, sans-serif;
+  font-size: 12px;
   font-weight: 365;
 }
 
 .pdf-abs-style-2 {
   color: rgba(0, 0, 0, 1);
-  font-size: 12px;
+  font-family: sans-serif, Arial, Helvetica, sans-serif;
+  font-size: 8px;
   font-weight: 365;
 }
 
 .pdf-abs-style-3 {
   color: rgba(0, 0, 0, 1);
+  font-family: sans-serif, Arial, Helvetica, sans-serif;
   font-size: 15px;
   font-weight: 365;
 }
 
 .pdf-abs-style-4 {
   color: rgba(0, 0, 0, 1);
+  font-family: sans-serif, Arial, Helvetica, sans-serif;
   font-size: 32px;
   font-weight: 365;
 }
 
 .pdf-abs-style-5 {
   color: rgba(0, 0, 0, 1);
+  font-family: sans-serif, Arial, Helvetica, sans-serif;
   font-size: 17px;
   font-weight: 520;
 }
 
 .pdf-flow-style-0 {
   color: rgba(0, 0, 0, 1);
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 365;
-  line-height: 6px;
+  line-height: 15px;
   position: relative;
   white-space: normal;
 }
 
 .pdf-flow-style-1 {
   color: rgba(0, 0, 0, 1);
-  font-size: 12px;
+  font-size: 8px;
   font-weight: 365;
-  line-height: 9px;
-  position: relative;
-  white-space: normal;
-}
-
-.pdf-flow-style-2 {
-  color: rgba(0, 0, 0, 1);
-  font-size: 15px;
-  font-weight: 365;
-  line-height: 11px;
+  line-height: 10px;
   position: relative;
   white-space: normal;
 }

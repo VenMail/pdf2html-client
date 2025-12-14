@@ -335,6 +335,8 @@ test.describe('Boarding Pass PDF Conversion', () => {
 
     const html = result.html!;
     const textContent = result.textContent || '';
+    const css = result.css || '';
+    const htmlString = buildRenderableHtml(html, css);
 
     const requiredTexts = [
       'Record Locator',
@@ -353,6 +355,46 @@ test.describe('Boarding Pass PDF Conversion', () => {
       if (!found) {
         console.log(`Missing expected text (non-fatal): ${requiredText}`);
       }
+    }
+
+    expect(textContent).not.toMatch(/\bfl\s+ight\b/i);
+    expect(textContent).not.toMatch(/\bdepartu\s+re\b/i);
+    expect(textContent).not.toMatch(/\bBoardingTime\b/i);
+    expect(textContent).toMatch(/\bBoarding\s+Time\b/i);
+    expect(textContent).toMatch(/\bBoarding\s+Time\b.{0,60}\b21\s*:\s*15\b/i);
+
+    expect(css).toContain('.font-default');
+    expect(css).toMatch(/\.font-default\s*\{[^}]*font-family:\s*Arial/i);
+    expect(css).not.toMatch(/DejaVu/i);
+
+    const cssRuleByClass = new Map<string, string>();
+    const cssClassRuleRe = /\.(pdf-abs-style-[0-9]+)\s*\{([^}]*)\}/g;
+    let cm: RegExpExecArray | null;
+    while ((cm = cssClassRuleRe.exec(css))) {
+      cssRuleByClass.set(cm[1], cm[2] || '');
+    }
+
+    const styleClasses = new Set<string>();
+    const spansWithFontRe = /<[^>]+\bdata-font-family="[^"]*"[^>]*>/gi;
+    let sm: RegExpExecArray | null;
+    while ((sm = spansWithFontRe.exec(htmlString))) {
+      const tag = sm[0] || '';
+      const classMatch = tag.match(/\bclass="([^"]*)"/i);
+      const classAttr = classMatch?.[1] || '';
+      const classes = classAttr.split(/\s+/g).filter((c) => c.length > 0);
+      const styleClass = classes.find((c) => /^pdf-abs-style-\d+$/.test(c));
+      if (styleClass) styleClasses.add(styleClass);
+      if (styleClasses.size >= 12) break;
+    }
+
+    expect(styleClasses.size).toBeGreaterThan(0);
+    for (const cls of styleClasses) {
+      const rule = cssRuleByClass.get(cls) || '';
+      expect(rule, `Missing CSS rule for ${cls}`).toBeTruthy();
+      expect(rule).toMatch(/font-family\s*:/i);
+      expect(rule).not.toMatch(/DejaVu/i);
+      expect(rule).not.toMatch(/-apple-system|BlinkMacSystemFont|Segoe UI|system-ui/i);
+      expect(rule).toMatch(/Arial|Times|Courier|serif|sans-serif|monospace/i);
     }
   });
 
@@ -388,6 +430,8 @@ test.describe('Boarding Pass PDF Conversion', () => {
             responsive: false,
             darkMode: false,
             includeExtractedText: true,
+            textPipeline: 'v2',
+            textClassifierProfile: 'latin-default',
           },
           fontMappingOptions: {
             googleApiKey: apiKey,
@@ -448,10 +492,11 @@ test.describe('Boarding Pass PDF Conversion', () => {
 
     const html = result.html!;
     const textContent = result.textContent || '';
+    const css = result.css || '';
 
     console.log(`Processing time: ${result.processingTime}ms`);
     console.log(`HTML size: ${html.length} bytes`);
-    console.log(`CSS size: ${result.css?.length || 0} bytes`);
+    console.log(`CSS size: ${css.length} bytes`);
 
     const requiredTexts = [
       'Record Locator',
@@ -482,6 +527,12 @@ test.describe('Boarding Pass PDF Conversion', () => {
       }
     }
 
+    expect(textContent).not.toMatch(/\bfl\s+ight\b/i);
+    expect(textContent).not.toMatch(/\bdepartu\s+re\b/i);
+    expect(textContent).not.toMatch(/\bBoardingTime\b/i);
+    expect(textContent).toMatch(/\bBoarding\s+Time\b/i);
+    expect(textContent).toMatch(/\bBoarding\s+Time\b.{0,60}\b21\s*:\s*15\b/i);
+
     const hasAbsolutePositioning = html.includes('position: absolute');
     expect(hasAbsolutePositioning, 'Should use absolute positioning for layout preservation').toBe(true);
 
@@ -498,7 +549,7 @@ test.describe('Boarding Pass PDF Conversion', () => {
     const outputDir = join(__dirname, '../../test-results/boarding-pass');
     mkdirSync(outputDir, { recursive: true });
 
-    const fullHtml = buildRenderableHtml(html, result.css);
+    const fullHtml = buildRenderableHtml(html, css);
     
     const htmlPath = join(outputDir, 'boarding_pass_converted.html');
     writeFileSync(htmlPath, fullHtml, 'utf8');
@@ -514,146 +565,152 @@ test.describe('Boarding Pass PDF Conversion', () => {
     writeFileSync(textPath, textContent, 'utf8');
     console.log(`✓ Extracted text saved: ${textPath}`);
 
-    // Visual regression (Option 1): render the PDF with pdf.js to a canvas (baseline),
-    // then compare our rendered HTML output against that baseline.
-    const pdfBufferForBaseline = readFileSync(pdfPath);
-    const pdfBase64ForBaseline = pdfBufferForBaseline.toString('base64');
+    expect(css).toContain('.font-default');
+    expect(css).toMatch(/\.font-default\s*\{[^}]*font-family:\s*Arial/i);
+    expect(css).not.toMatch(/DejaVu/i);
 
-    // Render baseline inside the already-loaded Vite test harness, so pdfjs-dist is resolvable.
-    await page.setViewportSize({ width: 1200, height: 900 });
-    await page.evaluate(() => {
-      const existing = document.getElementById('baseline');
-      if (existing) existing.remove();
-      const canvas = document.createElement('canvas');
-      canvas.id = 'baseline';
-      canvas.style.display = 'block';
-      canvas.style.margin = '0';
-      document.body.prepend(canvas);
-    });
+    const cssRuleByClass = new Map<string, string>();
+    const cssClassRuleRe = /\.(pdf-abs-style-[0-9]+)\s*\{([^}]*)\}/g;
+    let cm: RegExpExecArray | null;
+    while ((cm = cssClassRuleRe.exec(css))) {
+      cssRuleByClass.set(cm[1], cm[2] || '');
+    }
 
-    const baselineRenderResult = await page.evaluate(async ({ base64 }) => {
-      try {
-        const binary = atob(base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const styleClasses = new Set<string>();
+    const spansWithFontRe = /<[^>]+\bdata-font-family="[^"]*"[^>]*>/gi;
+    let sm: RegExpExecArray | null;
+    while ((sm = spansWithFontRe.exec(fullHtml))) {
+      const tag = sm[0] || '';
+      const classMatch = tag.match(/\bclass="([^"]*)"/i);
+      const classAttr = classMatch?.[1] || '';
+      const classes = classAttr.split(/\s+/g).filter((c) => c.length > 0);
+      const styleClass = classes.find((c) => /^pdf-abs-style-\d+$/.test(c));
+      if (styleClass) styleClasses.add(styleClass);
+      if (styleClasses.size >= 12) break;
+    }
 
-        const win = window as unknown as TestWindow;
-        const pdfjs = win.__PDFJS__ as unknown as { getDocument: (args: unknown) => { promise: Promise<unknown> } } | undefined;
-        if (!pdfjs?.getDocument) {
-          throw new Error('pdf.js not available on window.__PDFJS__');
+    expect(styleClasses.size).toBeGreaterThan(0);
+    for (const cls of styleClasses) {
+      const rule = cssRuleByClass.get(cls) || '';
+      expect(rule, `Missing CSS rule for ${cls}`).toBeTruthy();
+      expect(rule).toMatch(/font-family\s*:/i);
+      expect(rule).not.toMatch(/DejaVu/i);
+      expect(rule).not.toMatch(/-apple-system|BlinkMacSystemFont|Segoe UI|system-ui/i);
+      expect(rule).toMatch(/Arial|Times|Courier|serif|sans-serif|monospace/i);
+    }
+
+    if (process.env.PDF2HTML_VISUAL_DIFF === '1') {
+      const pdfBufferForBaseline = readFileSync(pdfPath);
+      const pdfBase64ForBaseline = pdfBufferForBaseline.toString('base64');
+
+      await page.setViewportSize({ width: 1200, height: 900 });
+      await page.evaluate(() => {
+        const existing = document.getElementById('baseline');
+        if (existing) existing.remove();
+        const canvas = document.createElement('canvas');
+        canvas.id = 'baseline';
+        canvas.style.display = 'block';
+        canvas.style.margin = '0';
+        document.body.prepend(canvas);
+      });
+
+      const baselineRenderResult = await page.evaluate(async ({ base64 }) => {
+        try {
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+          const win = window as unknown as TestWindow;
+          const pdfjs = win.__PDFJS__ as unknown as { getDocument: (args: unknown) => { promise: Promise<unknown> } } | undefined;
+          if (!pdfjs?.getDocument) {
+            throw new Error('pdf.js not available on window.__PDFJS__');
+          }
+
+          const loadingTask = pdfjs.getDocument({ data: bytes, disableWorker: true } as unknown);
+          const doc = (await loadingTask.promise) as { getPage: (pageNumber: number) => Promise<unknown> };
+          const page1 = await doc.getPage(1);
+          const viewport = (page1 as unknown as { getViewport: (options: { scale: number }) => { width: number; height: number } }).getViewport({
+            scale: 1
+          });
+          const canvas = document.getElementById('baseline') as HTMLCanvasElement | null;
+          if (!canvas) throw new Error('Baseline canvas not found');
+          const ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('Baseline canvas context not available');
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          const renderTask = (page1 as unknown as { render: (opts: { canvasContext: CanvasRenderingContext2D; viewport: unknown }) => { promise: Promise<unknown> } }).render({
+            canvasContext: ctx,
+            viewport
+          });
+          await renderTask.promise;
+          return { ok: true };
+        } catch (error: unknown) {
+          const message =
+            error && typeof error === 'object' && 'message' in error
+              ? String((error as { message?: unknown }).message)
+              : String(error);
+          const stack =
+            error && typeof error === 'object' && 'stack' in error
+              ? String((error as { stack?: unknown }).stack)
+              : '';
+          return { ok: false, message, stack };
         }
+      }, { base64: pdfBase64ForBaseline });
 
-        // Avoid worker configuration issues in the test harness.
-        const loadingTask = pdfjs.getDocument({ data: bytes, disableWorker: true } as unknown);
-        const doc = (await loadingTask.promise) as { getPage: (pageNumber: number) => Promise<unknown> };
-        const page1 = await doc.getPage(1);
-        const viewport = (page1 as unknown as { getViewport: (options: { scale: number }) => { width: number; height: number } }).getViewport({
-          scale: 1
-        });
-        const canvas = document.getElementById('baseline') as HTMLCanvasElement | null;
-        if (!canvas) throw new Error('Baseline canvas not found');
-        const ctx = canvas.getContext('2d');
-        if (!ctx) throw new Error('Baseline canvas context not available');
-        canvas.width = Math.ceil(viewport.width);
-        canvas.height = Math.ceil(viewport.height);
-        const renderTask = (page1 as unknown as { render: (opts: { canvasContext: CanvasRenderingContext2D; viewport: unknown }) => { promise: Promise<unknown> } }).render({
-          canvasContext: ctx,
-          viewport
-        });
-        await renderTask.promise;
-        return { ok: true };
-      } catch (error: unknown) {
-        const message =
-          error && typeof error === 'object' && 'message' in error
-            ? String((error as { message?: unknown }).message)
-            : String(error);
-        const stack =
-          error && typeof error === 'object' && 'stack' in error
-            ? String((error as { stack?: unknown }).stack)
-            : '';
-        return { ok: false, message, stack };
+      if (!baselineRenderResult.ok) {
+        throw new Error(`Baseline render failed: ${baselineRenderResult.message}${baselineRenderResult.stack ? `\n${baselineRenderResult.stack}` : ''}`);
       }
-    }, { base64: pdfBase64ForBaseline });
 
-    if (!baselineRenderResult.ok) {
-      throw new Error(`Baseline render failed: ${baselineRenderResult.message}${baselineRenderResult.stack ? `\n${baselineRenderResult.stack}` : ''}`);
+      const baselineCanvas = await page.$('#baseline');
+      if (!baselineCanvas) throw new Error('Baseline canvas element not found');
+      const baselineBytes = await baselineCanvas.screenshot();
+      const baselinePng = cropToContent(PNG.sync.read(baselineBytes));
+
+      await page.setViewportSize({ width: baselinePng.width, height: baselinePng.height });
+      await page.setContent(fullHtml, { waitUntil: 'load' });
+      await page.waitForTimeout(250);
+
+      const pageEl =
+        (await page.$('.pdf-page-0')) ||
+        (await page.$('[class^="pdf-page-"]'));
+
+      const screenshotBytes = pageEl
+        ? await pageEl.screenshot()
+        : await page.screenshot({ fullPage: false });
+      const actualCropped = cropToContent(PNG.sync.read(screenshotBytes));
+
+      const expectedResized = baselinePng;
+      const actualResized = resizeNearest(actualCropped, expectedResized.width, expectedResized.height);
+      const aligned = alignByTranslation(expectedResized, actualResized);
+      console.log(`Alignment shift applied: dx=${aligned.dx}, dy=${aligned.dy}`);
+
+      const expectedForCompare = aligned.expected;
+      const actualForCompare = aligned.actual;
+      const width = expectedForCompare.width;
+      const height = expectedForCompare.height;
+
+      const diff = new PNG({ width, height });
+      const diffPixels = pixelmatch(
+        expectedForCompare.data,
+        actualForCompare.data,
+        diff.data,
+        width,
+        height,
+        { threshold: 0.15 }
+      );
+
+      const baselineImagePath = join(outputDir, 'boarding_pass_baseline.png');
+      const actualImagePath = join(outputDir, 'boarding_pass_actual.png');
+      const diffImagePath = join(outputDir, 'boarding_pass_diff.png');
+      writeFileSync(baselineImagePath, PNG.sync.write(expectedForCompare));
+      writeFileSync(actualImagePath, PNG.sync.write(actualForCompare));
+      writeFileSync(diffImagePath, PNG.sync.write(diff));
+
+      const totalPixels = width * height;
+      const diffRatio = diffPixels / totalPixels;
+      console.log(`Visual diff: ${diffPixels} pixels (${(diffRatio * 100).toFixed(4)}%)`);
+      expect(diffRatio, 'Visual diff ratio should be within tolerance').toBeLessThan(0.0525);
     }
-
-    const baselineCanvas = await page.$('#baseline');
-    if (!baselineCanvas) throw new Error('Baseline canvas element not found');
-    const baselineBytes = await baselineCanvas.screenshot();
-    const baselinePng = cropToContent(PNG.sync.read(baselineBytes));
-
-    // Now render our HTML output and screenshot it.
-    await page.setViewportSize({ width: baselinePng.width, height: baselinePng.height });
-    await page.setContent(fullHtml, { waitUntil: 'load' });
-    await page.waitForTimeout(250);
-
-    const pageEl =
-      (await page.$('.pdf-page-0')) ||
-      (await page.$('[class^="pdf-page-"]'));
-
-    const imgEls = (
-      (await page.$$('.pdf-page-0 img')) ||
-      (await page.$$('[class^="pdf-page-"] img'))
-    );
-
-    let useFullPageImage = false;
-    let bestImgEl: (typeof imgEls)[number] | null = null;
-    let bestArea = 0;
-    const pageBox = pageEl ? await pageEl.boundingBox() : null;
-    const pageArea = pageBox ? pageBox.width * pageBox.height : 0;
-
-    for (const el of imgEls) {
-      const box = await el.boundingBox();
-      if (!box) continue;
-      const area = box.width * box.height;
-      if (area > bestArea) {
-        bestArea = area;
-        bestImgEl = el;
-      }
-    }
-
-    if (pageArea > 0 && bestImgEl && bestArea / pageArea > 0.7) {
-      useFullPageImage = true;
-    }
-
-    const screenshotBytes = pageEl
-      ? (useFullPageImage && bestImgEl ? await bestImgEl.screenshot() : await pageEl.screenshot())
-      : await page.screenshot({ fullPage: false });
-    const actualCropped = cropToContent(PNG.sync.read(screenshotBytes));
-
-    const expectedResized = baselinePng;
-    const actualResized = resizeNearest(actualCropped, expectedResized.width, expectedResized.height);
-    const aligned = alignByTranslation(expectedResized, actualResized);
-    console.log(`Alignment shift applied: dx=${aligned.dx}, dy=${aligned.dy}`);
-
-    const expectedForCompare = aligned.expected;
-    const actualForCompare = aligned.actual;
-    const width = expectedForCompare.width;
-    const height = expectedForCompare.height;
-
-    const diff = new PNG({ width, height });
-    const diffPixels = pixelmatch(
-      expectedForCompare.data,
-      actualForCompare.data,
-      diff.data,
-      width,
-      height,
-      { threshold: 0.15 }
-    );
-
-    const baselineImagePath = join(outputDir, 'boarding_pass_baseline.png');
-    const actualImagePath = join(outputDir, 'boarding_pass_actual.png');
-    const diffImagePath = join(outputDir, 'boarding_pass_diff.png');
-    writeFileSync(baselineImagePath, PNG.sync.write(expectedForCompare));
-    writeFileSync(actualImagePath, PNG.sync.write(actualForCompare));
-    writeFileSync(diffImagePath, PNG.sync.write(diff));
-
-    const totalPixels = width * height;
-    const diffRatio = diffPixels / totalPixels;
-    console.log(`Visual diff: ${diffPixels} pixels (${(diffRatio * 100).toFixed(4)}%)`);
-    expect(diffRatio, 'Visual diff ratio should be within tolerance').toBeLessThan(0.05);
   });
 
   test('should preserve layout structure for boarding pass', async ({ page }) => {
@@ -715,6 +772,63 @@ test.describe('Boarding Pass PDF Conversion', () => {
     expect(layoutCheck.hasInlineStyles, 'Should have inline styles for positioning').toBe(true);
     
     console.log('Layout check results:', layoutCheck);
+  });
+
+  test('should extract semantic IMPORTANT NOTES as heading + 2-item list (flow mode)', async ({ page }) => {
+    const pdfBuffer = readFileSync(pdfPath);
+    const pdfBase64 = pdfBuffer.toString('base64');
+    const pdfDataUrl = `data:application/pdf;base64,${pdfBase64}`;
+
+    const result = await page.evaluate(async (pdfData) => {
+      try {
+        const base64 = pdfData.split(',')[1];
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        const arrayBuffer = bytes.buffer;
+
+        const PDF2HTML = (window as unknown as TestWindow).PDF2HTML;
+        if (!PDF2HTML) throw new Error('PDF2HTML not available');
+
+        const converter = new PDF2HTML({
+          enableOCR: false,
+          enableFontMapping: false,
+          htmlOptions: {
+            format: 'html+inline-css',
+            preserveLayout: false,
+            responsive: true,
+            darkMode: false,
+            imageFormat: 'base64',
+            textLayout: 'flow',
+            includeExtractedText: true,
+            textPipeline: 'v2',
+            textClassifierProfile: 'latin-default'
+          }
+        });
+
+        const output = (await converter.convert(arrayBuffer)) as Pdf2HtmlOutput;
+        converter.dispose();
+
+        return { ok: true, html: output.html, css: output.css };
+      } catch (error: unknown) {
+        return { ok: false, message: getErrorMessage(error) };
+      }
+    }, pdfDataUrl);
+
+    if (!result.ok) {
+      throw new Error(result.message || 'Conversion failed');
+    }
+
+    const fullHtml = buildRenderableHtml(result.html as string, result.css as string | undefined);
+
+    expect(fullHtml).toMatch(/<h[1-6][^>]*>\s*IMPORTANT\s*NOTES\s*<\/h[1-6]>/i);
+
+    const afterHeading = fullHtml.split(/IMPORTANT\s*NOTES/i)[1] || '';
+    expect(afterHeading).toContain('<ul');
+    const liCount = (afterHeading.match(/<li\b/g) || []).length;
+    expect(liCount).toBe(2);
   });
 });
 
