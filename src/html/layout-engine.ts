@@ -7,11 +7,22 @@ export class LayoutEngine {
   private options: HTMLGenerationOptions;
   private textProcessor: TextProcessor;
   private layoutAnalyzer: LayoutAnalyzer;
+  private absVisualStyleClassByKey: Map<string, string> = new Map();
+  private extraCssRules: string[] = [];
 
   constructor(options: HTMLGenerationOptions) {
     this.options = options;
     this.textProcessor = new TextProcessor();
     this.layoutAnalyzer = new LayoutAnalyzer();
+  }
+
+  resetCssCaches(): void {
+    this.absVisualStyleClassByKey.clear();
+    this.extraCssRules = [];
+  }
+
+  getExtraCssRules(): string[] {
+    return this.extraCssRules;
   }
 
   transformCoordinates(
@@ -32,10 +43,13 @@ export class LayoutEngine {
   generateTextElement(
     text: PDFTextContent,
     pageHeight: number,
-    fontClass: string
+    fontClass: string,
+    options?: {
+      coordsOverride?: { x: number; y: number };
+    }
   ): string {
     const processed = this.textProcessor.processTextContent([text])[0];
-    return this.generateProcessedTextElement(processed, pageHeight, fontClass);
+    return this.generateProcessedTextElement(processed, pageHeight, fontClass, options);
   }
 
   generateSvgTextElement(
@@ -47,51 +61,110 @@ export class LayoutEngine {
     return this.generateProcessedSvgTextElement(processed, pageHeight, fontClass);
   }
 
+  generateInlineTextSpan(text: PDFTextContent, fontClass: string): string {
+    const processed = this.textProcessor.processTextContent([text])[0];
+
+    const visualStyle: Record<string, string> = {
+      'font-size': `${processed.fontSize}px`,
+      color: processed.color
+    };
+
+    if (processed.fontWeight && processed.fontWeight !== 400) {
+      visualStyle['font-weight'] = String(processed.fontWeight);
+    }
+
+    if (processed.fontStyle && processed.fontStyle !== 'normal') {
+      visualStyle['font-style'] = processed.fontStyle;
+    }
+
+    if (processed.textDecoration && processed.textDecoration !== 'none') {
+      visualStyle['text-decoration'] = processed.textDecoration;
+    }
+
+    const visualClass = this.options.preserveLayout ? this.getAbsVisualStyleClass(visualStyle) : undefined;
+
+    const attrs: string[] = [];
+    const classes: string[] = [];
+    if (fontClass) classes.push(fontClass);
+    if (visualClass) classes.push(visualClass);
+    if (classes.length > 0) {
+      attrs.push(`class="${classes.join(' ')}"`);
+    }
+
+    if (processed.htmlAttributes) {
+      for (const [key, value] of Object.entries(processed.htmlAttributes)) {
+        attrs.push(`${key}="${this.escapeHtml(value)}"`);
+      }
+    }
+
+    const attrsString = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
+
+    const inlineTag = processed.semanticTag === 'strong' || processed.semanticTag === 'em'
+      ? processed.semanticTag
+      : 'span';
+    return `<${inlineTag}${attrsString}>${this.escapeHtml(processed.text)}</${inlineTag}>`;
+  }
+
   private generateProcessedTextElement(
     text: ProcessedTextContent,
     pageHeight: number,
-    fontClass: string
+    fontClass: string,
+    options?: {
+      coordsOverride?: { x: number; y: number };
+    }
   ): string {
-    const coords = this.transformCoordinates(text.x, text.y, pageHeight, text.height);
+    const coords = options?.coordsOverride ?? this.transformCoordinates(text.x, text.y, pageHeight, text.height);
 
     // Build style attributes
-    const styleParts: string[] = [];
-    
-    if (this.options.preserveLayout) {
-      styleParts.push(`position: absolute`);
-      styleParts.push(`left: ${coords.x}px`);
-      styleParts.push(`top: ${coords.y}px`);
-      styleParts.push(`line-height: ${Math.max(1, Math.round(text.height))}px`);
-      if (typeof text.rotation === 'number' && Math.abs(text.rotation) > 0.01) {
-        styleParts.push(`transform: rotate(${text.rotation}deg)`);
-        styleParts.push(`transform-origin: left top`);
-      }
-    }
-    
-    styleParts.push(`font-size: ${text.fontSize}px`);
-    styleParts.push(`color: ${text.color}`);
-    
+    const positionalStyleParts: string[] = [];
+    const visualStyle: Record<string, string> = {
+      'font-size': `${text.fontSize}px`,
+      color: text.color
+    };
+
     if (text.fontWeight && text.fontWeight !== 400) {
-      styleParts.push(`font-weight: ${text.fontWeight}`);
-    }
-    
-    if (text.fontStyle && text.fontStyle !== 'normal') {
-      styleParts.push(`font-style: ${text.fontStyle}`);
-    }
-    
-    if (text.textDecoration && text.textDecoration !== 'none') {
-      styleParts.push(`text-decoration: ${text.textDecoration}`);
+      visualStyle['font-weight'] = String(text.fontWeight);
     }
 
-    const style = styleParts.join('; ');
+    if (text.fontStyle && text.fontStyle !== 'normal') {
+      visualStyle['font-style'] = text.fontStyle;
+    }
+
+    if (text.textDecoration && text.textDecoration !== 'none') {
+      visualStyle['text-decoration'] = text.textDecoration;
+    }
+
+    let visualClass: string | undefined;
+
+    if (this.options.preserveLayout) {
+      positionalStyleParts.push(`position: absolute`);
+      positionalStyleParts.push(`left: ${coords.x}px`);
+      positionalStyleParts.push(`top: ${coords.y}px`);
+      positionalStyleParts.push(`line-height: ${Math.max(1, Math.round(text.height))}px`);
+      if (typeof text.rotation === 'number' && Math.abs(text.rotation) > 0.01) {
+        positionalStyleParts.push(`transform: rotate(${text.rotation}deg)`);
+        positionalStyleParts.push(`transform-origin: left top`);
+      }
+      visualClass = this.getAbsVisualStyleClass(visualStyle);
+    } else {
+      // Non-layout-preserving output still uses inline styles.
+      for (const [k, v] of Object.entries(visualStyle)) {
+        positionalStyleParts.push(`${k}: ${v}`);
+      }
+    }
+
+    const style = positionalStyleParts.join('; ');
 
     // Determine HTML tag based on semantic analysis
     const tag = text.semanticTag || 'span';
     
     // Build HTML attributes
     const attrs: string[] = [];
-    if (fontClass) {
-      attrs.push(`class="${fontClass}"`);
+    const classes: string[] = [];
+    if (fontClass) classes.push(fontClass);
+    if (visualClass) classes.push(visualClass);
+    if (classes.length > 0) {
+      attrs.push(`class="${classes.join(' ')}"`);
     }
     attrs.push(`style="${style}"`);
     
@@ -104,6 +177,22 @@ export class LayoutEngine {
     const attrsString = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
 
     return `<${tag}${attrsString}>${this.escapeHtml(text.text)}</${tag}>`;
+  }
+
+  private getAbsVisualStyleClass(style: Record<string, string>): string {
+    const entries = Object.entries(style)
+      .filter(([, v]) => typeof v === 'string' && v.length > 0)
+      .sort(([a], [b]) => a.localeCompare(b));
+    const key = entries.map(([k, v]) => `${k}:${v}`).join(';');
+
+    const existing = this.absVisualStyleClassByKey.get(key);
+    if (existing) return existing;
+
+    const className = `pdf-abs-style-${this.absVisualStyleClassByKey.size}`;
+    this.absVisualStyleClassByKey.set(key, className);
+    const decls = entries.map(([k, v]) => `  ${k}: ${v};`).join('\n');
+    this.extraCssRules.push(`.${className} {\n${decls}\n}`);
+    return className;
   }
 
   private generateProcessedSvgTextElement(

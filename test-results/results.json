@@ -11,7 +11,7 @@
     "grepInvert": null,
     "maxFailures": 0,
     "metadata": {
-      "actualWorkers": 2
+      "actualWorkers": 1
     },
     "preserveOutput": "always",
     "reporter": [
@@ -47,7 +47,7 @@
         "repeatEach": 1,
         "retries": 0,
         "metadata": {
-          "actualWorkers": 2
+          "actualWorkers": 1
         },
         "id": "chromium",
         "name": "chromium",
@@ -64,9 +64,9 @@
     "updateSnapshots": "missing",
     "updateSourceMethod": "patch",
     "version": "1.57.0",
-    "workers": 8,
+    "workers": 1,
     "webServer": {
-      "command": "pnpm run demo -- --port 5174",
+      "command": "pnpm run demo -- --port 5174 --strictPort",
       "url": "http://localhost:5174",
       "reuseExistingServer": true,
       "timeout": 120000
@@ -83,9 +83,43 @@
         {
           "title": "Boarding Pass PDF Conversion",
           "file": "boarding-pass.spec.ts",
-          "line": 210,
+          "line": 211,
           "column": 6,
           "specs": [
+            {
+              "title": "should convert boarding_pass.pdf with v2 classifier (smoke)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1782,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2025-12-14T05:41:39.150Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "2765b7bd85eb713bb41d-30c83e9a4e3e45671e7d",
+              "file": "boarding-pass.spec.ts",
+              "line": 247,
+              "column": 3
+            },
             {
               "title": "should convert boarding_pass.pdf with high fidelity",
               "ok": true,
@@ -102,26 +136,20 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 12716,
+                      "duration": 28468,
                       "errors": [],
                       "stdout": [
                         {
-                          "text": "Processing time: 464ms\n"
+                          "text": "Processing time: 241ms\n"
                         },
                         {
-                          "text": "HTML size: 185016 bytes\n"
+                          "text": "HTML size: 199649 bytes\n"
                         },
                         {
-                          "text": "CSS size: 1113 bytes\n"
+                          "text": "CSS size: 2101 bytes\n"
                         },
                         {
-                          "text": "Missing expected text (non-fatal): Murtala Muhammed International Airport\n"
-                        },
-                        {
-                          "text": "Missing expected text (non-fatal): Bole International\n"
-                        },
-                        {
-                          "text": "Text elements extracted: 106\n"
+                          "text": "Text elements extracted: 91\n"
                         },
                         {
                           "text": "✓ HTML output saved: C:\\dev\\pdf2html-client\\test-results\\boarding-pass\\boarding_pass_converted.html\n"
@@ -136,12 +164,12 @@
                           "text": "Alignment shift applied: dx=0, dy=0\n"
                         },
                         {
-                          "text": "Visual diff: 9352 pixels (4.7143%)\n"
+                          "text": "Visual diff: 9343 pixels (4.7097%)\n"
                         }
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2025-12-13T17:41:06.417Z",
+                      "startTime": "2025-12-14T05:41:41.233Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -151,7 +179,7 @@
               ],
               "id": "2765b7bd85eb713bb41d-93c8b480666cf939fec5",
               "file": "boarding-pass.spec.ts",
-              "line": 246,
+              "line": 359,
               "column": 3
             },
             {
@@ -167,10 +195,10 @@
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 1,
-                      "parallelIndex": 1,
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2666,
+                      "duration": 758,
                       "errors": [],
                       "stdout": [
                         {
@@ -179,7 +207,7 @@
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2025-12-13T17:41:06.331Z",
+                      "startTime": "2025-12-14T05:42:09.723Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -189,7 +217,7 @@
               ],
               "id": "2765b7bd85eb713bb41d-47d63e928969373abafe",
               "file": "boarding-pass.spec.ts",
-              "line": 541,
+              "line": 659,
               "column": 3
             }
           ]
@@ -199,9 +227,9 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2025-12-13T17:41:01.466Z",
-    "duration": 18888.27,
-    "expected": 2,
+    "startTime": "2025-12-14T05:41:36.230Z",
+    "duration": 34697.87,
+    "expected": 3,
     "skipped": 0,
     "unexpected": 0,
     "flaky": 0

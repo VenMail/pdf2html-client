@@ -68,6 +68,10 @@ export class PDFJSWrapper {
   private async extractGraphics(pdfPage: PDFJSPage, pageHeight: number): Promise<PDFGraphicsContent[]> {
     // Lazy-load OPS constants - use dynamic import with Function to avoid Vite static analysis
     let OPS: Record<string, number> | undefined;
+    if (this.pdfjsLib) {
+      OPS = (this.pdfjsLib as { OPS?: Record<string, number>; default?: { OPS?: Record<string, number> } }).OPS ||
+        (this.pdfjsLib as { OPS?: Record<string, number>; default?: { OPS?: Record<string, number> } }).default?.OPS;
+    }
     try {
       // Use Function constructor to make import truly dynamic and avoid Vite static analysis
       const importPdfjs = new Function('specifier', 'return import(specifier)');
@@ -75,10 +79,10 @@ export class PDFJSWrapper {
         OPS?: Record<string, number>;
         default?: { OPS?: Record<string, number> };
       };
-      OPS = pdfjs.OPS || pdfjs.default?.OPS;
+      OPS = OPS || pdfjs.OPS || pdfjs.default?.OPS;
     } catch (error) {
       // pdfjs-dist not available or failed to load OPS, skip graphics extraction
-      OPS = undefined;
+      // Keep any OPS we already had (e.g. injected/cached); only skip if none available.
       console.debug('Failed to load pdf.js OPS for graphics:', error);
     }
     if (!OPS || typeof pdfPage.getOperatorList !== 'function') {

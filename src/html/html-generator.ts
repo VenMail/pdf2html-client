@@ -10,11 +10,18 @@ import { CSSGenerator } from './css-generator.js';
 import { LayoutEngine } from './layout-engine.js';
 import { RegionLayoutAnalyzer } from '../core/region-layout.js';
 
+type LineToken =
+  | { type: 'text'; text: string; sample: PDFTextContent }
+  | { type: 'space' };
+
 export class HTMLGenerator {
   private cssGenerator: CSSGenerator;
   private layoutEngine: LayoutEngine;
   private options: HTMLGenerationOptions;
   private regionLayoutAnalyzer: RegionLayoutAnalyzer;
+  private extraCssRules: string[] = [];
+  private flowStyleClassByKey: Map<string, string> = new Map();
+  private absGapCssInjected: boolean = false;
 
   constructor(
     options: HTMLGenerationOptions,
@@ -23,7 +30,10 @@ export class HTMLGenerator {
     this.options = options;
     this.cssGenerator = new CSSGenerator(options, cssOptions);
     this.layoutEngine = new LayoutEngine(options);
-    this.regionLayoutAnalyzer = new RegionLayoutAnalyzer();
+    this.regionLayoutAnalyzer = new RegionLayoutAnalyzer({
+      textPipeline: options.textPipeline ?? 'legacy',
+      textClassifierProfile: options.textClassifierProfile
+    });
   }
 
   generate(
@@ -31,15 +41,22 @@ export class HTMLGenerator {
     fontMappings: FontMapping[],
     metadata: OutputMetadata
   ): HTMLOutput {
+    this.extraCssRules = [];
+    this.flowStyleClassByKey.clear();
+    this.absGapCssInjected = false;
+    this.layoutEngine.resetCssCaches();
+
     const html = this.generateHTML(document, fontMappings);
     const css = this.generateCSS(fontMappings, document.pages);
     const fonts = this.extractFontFamilies(fontMappings);
+    const text = this.options.includeExtractedText ? this.extractDocumentText(document) : undefined;
 
     return {
       html: this.formatOutput(html, css),
       css,
       metadata,
-      fonts
+      fonts,
+      text
     };
   }
 
@@ -201,6 +218,7 @@ export class HTMLGenerator {
     if (nonEmpty.length === 0) return '';
 
     const analysis = this.regionLayoutAnalyzer.analyze(page);
+    const passes = this.options.textLayoutPasses ?? 1;
 
     const html: string[] = [];
 
@@ -209,13 +227,85 @@ export class HTMLGenerator {
       const height = Math.max(0, region.rect.height);
 
       if (!region.flowAllowed) {
+        html.push(
+          `<div class="pdf-abs-region" style="position: absolute; left: ${region.rect.left}px; top: ${region.rect.top}px; width: ${width}px; height: ${height}px;" data-x="${region.rect.left}" data-top="${region.rect.top}" data-width="${width}" data-height="${height}">`
+        );
+
         for (const line of region.lines) {
+          const lineTop = Math.max(0, Math.round((line.rect.top - region.rect.top) * 1000) / 1000);
+          const lineHeight = Math.max(1, Math.round(line.rect.height * 1000) / 1000);
           const mergedRuns = this.mergeTextRuns(line.items);
-          for (const run of mergedRuns) {
-            const fontClass = this.getFontClass(run.fontFamily, fontMappings);
-            html.push(this.layoutEngine.generateTextElement(run, page.height, fontClass));
+
+          const canRelativeRebuild =
+            passes >= 2 &&
+            !line.hasRotation &&
+            (() => {
+              if (mergedRuns.length <= 1) return false;
+              const fs = mergedRuns.map((t) => t.fontSize);
+              const minFs = Math.min(...fs);
+              const maxFs = Math.max(...fs);
+              if (maxFs - minFs > 1.75) return false;
+
+              const alphaNumRuns = mergedRuns.filter((t) => /[A-Za-z0-9]/.test(t.text));
+              const ys = (alphaNumRuns.length > 0 ? alphaNumRuns : mergedRuns).map((t) => t.y);
+              const ySpread = Math.max(...ys) - Math.min(...ys);
+              const yTol = Math.max(1.5, Math.min(lineHeight, ((minFs + maxFs) / 2) * 0.35));
+              if (ySpread > yTol) return false;
+
+              let overlaps = 0;
+              let cursor = -Infinity;
+              for (const run of mergedRuns) {
+                const start = run.x;
+                if (Number.isFinite(cursor) && start < cursor - 0.75) overlaps++;
+                cursor = Math.max(cursor, start + Math.max(0, run.width));
+              }
+
+              return overlaps <= Math.max(0, Math.floor(mergedRuns.length / 5));
+            })();
+
+          if (canRelativeRebuild) {
+            if (!this.absGapCssInjected) {
+              this.extraCssRules.push('.pdf-abs-gap { display: inline-block; font-size: 0; line-height: 0; }');
+              this.absGapCssInjected = true;
+            }
+            html.push(
+              `<div class="pdf-abs-line" style="position: absolute; left: 0; top: ${lineTop}px; width: ${width}px; height: ${lineHeight}px; white-space: pre; line-height: ${lineHeight}px;">`
+            );
+
+            let cursorX = 0;
+            for (const run of mergedRuns) {
+              const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+              const xRel = run.x - region.rect.left;
+              const gap = xRel - cursorX;
+              if (gap > 0.5) {
+                const w = Math.round(gap * 1000) / 1000;
+                html.push(`<span class="pdf-abs-gap" style="width: ${w}px"></span>`);
+              }
+              html.push(this.layoutEngine.generateInlineTextSpan(run, fontClass));
+              cursorX = Math.max(cursorX, xRel + Math.max(0, run.width));
+            }
+
+            html.push('</div>');
+          } else {
+            html.push(
+              `<div class="pdf-abs-line" style="position: absolute; left: 0; top: ${lineTop}px; width: ${width}px; height: ${lineHeight}px;">`
+            );
+
+            for (const run of mergedRuns) {
+              const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+              const abs = this.layoutEngine.transformCoordinates(run.x, run.y, page.height, run.height);
+              const rel = {
+                x: abs.x - region.rect.left,
+                y: abs.y - region.rect.top - lineTop
+              };
+              html.push(this.layoutEngine.generateTextElement(run, page.height, fontClass, { coordsOverride: rel }));
+            }
+
+            html.push('</div>');
           }
         }
+
+        html.push('</div>');
         continue;
       }
 
@@ -226,36 +316,70 @@ export class HTMLGenerator {
       for (const paragraph of region.paragraphs) {
         const dominant = paragraph.dominant;
         const fontClass = this.getFontClass(dominant.fontFamily, fontMappings);
-        const styleParts: string[] = [];
-        styleParts.push('position: relative');
-        styleParts.push('margin: 0');
-        styleParts.push('padding: 0');
-        styleParts.push(this.options.preserveLayout ? 'white-space: pre' : 'white-space: pre-wrap');
-        styleParts.push(`line-height: ${Math.max(1, Math.round(paragraph.lineHeight * 1000) / 1000)}px`);
-        styleParts.push(`font-size: ${dominant.fontSize}px`);
-        styleParts.push(`color: ${dominant.color}`);
-        if (dominant.fontWeight && dominant.fontWeight !== 400) styleParts.push(`font-weight: ${dominant.fontWeight}`);
-        if (dominant.fontStyle && dominant.fontStyle !== 'normal') styleParts.push(`font-style: ${dominant.fontStyle}`);
+        const lineHeight = Math.max(1, Math.round(paragraph.lineHeight * 1000) / 1000);
+        const flowStyle: Record<string, string> = {
+          position: 'relative',
+          'white-space': 'normal',
+          'line-height': `${lineHeight}px`,
+          ...(passes >= 2 ? {} : { 'font-size': `${dominant.fontSize}px`, color: dominant.color })
+        };
+        if (passes < 2) {
+          if (dominant.fontWeight && dominant.fontWeight !== 400) flowStyle['font-weight'] = String(dominant.fontWeight);
+          if (dominant.fontStyle && dominant.fontStyle !== 'normal') flowStyle['font-style'] = dominant.fontStyle;
+        }
+
+        const flowClass = this.getFlowStyleClass(flowStyle);
 
         const mt = Math.max(0, Math.round(paragraph.gapBefore * 1000) / 1000);
-        if (mt > 0) {
-          styleParts.push(`margin-top: ${mt}px`);
-        }
+        const indents = paragraph.lines.map((l) => l.indent);
+        const minIndent = indents.length > 0 ? Math.max(0, Math.round(Math.min(...indents) * 1000) / 1000) : 0;
+        const firstIndent = indents.length > 0 ? Math.max(0, Math.round(indents[0] * 1000) / 1000) : 0;
+        const textIndent = Math.round((firstIndent - minIndent) * 1000) / 1000;
 
-        const style = styleParts.join('; ');
+        const inlineParts: string[] = [];
+        if (mt > 0) inlineParts.push(`margin-top: ${mt}px`);
+        if (minIndent > 0) inlineParts.push(`padding-left: ${minIndent}px`);
+        if (Math.abs(textIndent) > 0.01) inlineParts.push(`text-indent: ${textIndent}px`);
+        const inlineStyle = inlineParts.length > 0 ? ` style="${inlineParts.join('; ')}"` : '';
 
-        const linesHtml: string[] = [];
-        for (let i = 0; i < paragraph.lines.length; i++) {
-          const line = paragraph.lines[i];
-          if (i > 0) linesHtml.push('<br/>');
-          const indent = Math.max(0, Math.round(line.indent * 1000) / 1000);
-          if (indent > 0) {
-            linesHtml.push(`<span style="display: inline-block; margin-left: ${indent}px;"></span>`);
+        let paragraphBody: string;
+
+        if (passes >= 2) {
+          const parts: string[] = [];
+
+          for (let i = 0; i < paragraph.lines.length; i++) {
+            const lineEntry = paragraph.lines[i];
+
+            if (i > 0 && !lineEntry.joinWithPrev) {
+              parts.push(' ');
+            }
+
+            const sourceLine = lineEntry.sourceLine;
+            if (!sourceLine) {
+              const fallback = (lineEntry.text || '').trim();
+              if (fallback.length > 0) parts.push(this.escapeHtml(fallback));
+              continue;
+            }
+
+            let tokens = this.regionLayoutAnalyzer.reconstructLineTokens(sourceLine.items) as LineToken[];
+            const nextEntry = paragraph.lines[i + 1];
+            if (nextEntry?.joinWithPrev === 'hyphenation') {
+              tokens = this.stripTrailingSoftHyphen(tokens);
+            }
+
+            parts.push(this.renderTokens(tokens, fontMappings));
           }
-          linesHtml.push(this.escapeHtml(line.text));
+
+          paragraphBody = parts.join('');
+        } else {
+          const mergedText = paragraph.lines
+            .map((l) => (l.text || '').trim())
+            .filter((t) => t.length > 0)
+            .join(' ');
+          paragraphBody = this.escapeHtml(mergedText);
         }
 
-        html.push(`<p class="${fontClass}" style="${style}">${linesHtml.join('')}</p>`);
+        html.push(`<p class="${fontClass} ${flowClass}"${inlineStyle}>${paragraphBody}</p>`);
       }
 
       html.push('</div>');
@@ -266,6 +390,41 @@ export class HTMLGenerator {
 
   private mergeTextRuns(items: PDFTextContent[]): PDFTextContent[] {
     return this.regionLayoutAnalyzer.mergeTextRuns(items);
+  }
+
+  private renderTokens(tokens: LineToken[], fontMappings: FontMapping[]): string {
+    const out: string[] = [];
+    for (const tok of tokens) {
+      if (tok.type === 'space') {
+        out.push(' ');
+        continue;
+      }
+
+      const sample = tok.sample;
+      const fontClass = this.getFontClass(sample.fontFamily, fontMappings);
+      out.push(this.layoutEngine.generateInlineTextSpan({ ...sample, text: tok.text }, fontClass));
+    }
+    return out.join('');
+  }
+
+  private stripTrailingSoftHyphen(tokens: LineToken[]): LineToken[] {
+    if (!tokens || tokens.length === 0) return tokens;
+    const out = [...tokens];
+    for (let i = out.length - 1; i >= 0; i--) {
+      const t = out[i];
+      if (t.type === 'space') continue;
+      if (!t.text) break;
+      if (!t.text.endsWith('\u00AD')) break;
+
+      const nextText = t.text.slice(0, -1);
+      if (nextText.length === 0) {
+        out.splice(i, 1);
+      } else {
+        out[i] = { ...t, text: nextText };
+      }
+      break;
+    }
+    return out;
   }
 
   private getFontClass(fontFamily: string, fontMappings: FontMapping[]): string {
@@ -327,7 +486,10 @@ export class HTMLGenerator {
     fontMappings: FontMapping[],
     pages: PDFPage[]
   ): string {
-    return this.cssGenerator.generate(fontMappings, pages);
+    const base = this.cssGenerator.generate(fontMappings, pages);
+    const rules = [...this.layoutEngine.getExtraCssRules(), ...this.extraCssRules];
+    if (rules.length === 0) return base;
+    return [base, rules.join('\n\n')].join('\n\n');
   }
 
   private formatOutput(html: string, css: string): string {
@@ -345,6 +507,80 @@ export class HTMLGenerator {
     return Array.from(
       new Set(fontMappings.map((m) => m.googleFont.family))
     );
+  }
+
+  private extractDocumentText(document: PDFDocument): string {
+    const pages: string[] = [];
+    for (const page of document.pages) {
+      const pageText = this.extractPageText(page);
+      if (pageText) pages.push(pageText);
+    }
+    return pages.join('\n\n');
+  }
+
+  private extractPageText(page: PDFPage): string {
+    const analysis = this.regionLayoutAnalyzer.analyze(page);
+    const regions = [...analysis.regions].sort((a, b) => {
+      const yDiff = a.rect.top - b.rect.top;
+      if (Math.abs(yDiff) > 0.5) return yDiff;
+      return a.minX - b.minX;
+    });
+
+    const out: string[] = [];
+
+    const mergeLineBreakContinuation = (a: string, b: string): { merged: string; joined: boolean } => {
+      const aTrim = a.replace(/\s+$/g, '');
+      const bTrim = b.replace(/^\s+/g, '');
+
+      if (aTrim.length === 0 || bTrim.length === 0) {
+        return { merged: aTrim, joined: false };
+      }
+
+      const aEndsWithShortCapPrefix = /[A-Z][a-z]{0,2}$/.test(aTrim);
+      const bStartsLowerContinuation = /^[a-z]{3,}/.test(bTrim);
+      const aEndsWithPunct = /(?:\]|\[|\)|\(|\}|\{|,|\.|;|:|!|\?)$/.test(aTrim);
+
+      if (aEndsWithShortCapPrefix && bStartsLowerContinuation && !aEndsWithPunct) {
+        return { merged: aTrim + bTrim, joined: true };
+      }
+
+      return { merged: aTrim, joined: false };
+    };
+
+    for (const region of regions) {
+      if (region.flowAllowed && region.paragraphs.length > 0) {
+        for (const paragraph of region.paragraphs) {
+          const mergedText = paragraph.lines
+            .map((l) => (l.text || '').trim())
+            .filter((t) => t.length > 0)
+            .join(' ');
+          if (mergedText) out.push(mergedText);
+        }
+        continue;
+      }
+
+      const orderedLines = [...region.lines].sort((a, b) => {
+        const yDiff = a.rect.top - b.rect.top;
+        if (Math.abs(yDiff) > 0.5) return yDiff;
+        return a.minX - b.minX;
+      });
+
+      for (const line of orderedLines) {
+        const lineText = this.regionLayoutAnalyzer.reconstructLineText(line.items);
+        if (!lineText) continue;
+        const prev = out.length > 0 ? out[out.length - 1] : undefined;
+        if (prev) {
+          const merged = mergeLineBreakContinuation(prev, lineText);
+          if (merged.joined) {
+            out[out.length - 1] = merged.merged;
+            continue;
+          }
+        }
+        out.push(lineText);
+      }
+    }
+
+    return out.join('\n');
   }
 
   private generateGraphicsSVG(
@@ -451,5 +687,22 @@ export class HTMLGenerator {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  private getFlowStyleClass(style: Record<string, string>): string {
+    const entries = Object.entries(style)
+      .filter(([, v]) => typeof v === 'string' && v.length > 0)
+      .sort(([a], [b]) => a.localeCompare(b));
+    const key = entries.map(([k, v]) => `${k}:${v}`).join(';');
+
+    const existing = this.flowStyleClassByKey.get(key);
+    if (existing) return existing;
+
+    const className = `pdf-flow-style-${this.flowStyleClassByKey.size}`;
+    this.flowStyleClassByKey.set(key, className);
+
+    const decls = entries.map(([k, v]) => `  ${k}: ${v};`).join('\n');
+    this.extraCssRules.push(`.${className} {\n${decls}\n}`);
+    return className;
   }
 }

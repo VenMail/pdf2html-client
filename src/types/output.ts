@@ -3,6 +3,7 @@ export interface HTMLOutput {
   css: string;
   metadata: OutputMetadata;
   fonts: string[];
+  text?: string;
 }
 
 export interface OutputMetadata {
@@ -32,6 +33,10 @@ export interface HTMLGenerationOptions {
   textLayout?: 'absolute' | 'smart';
   textLayoutPasses?: 1 | 2;
   textRenderMode?: 'html' | 'svg';
+  textPipeline?: 'legacy' | 'v2';
+  includeExtractedText?: boolean;
+  textClassifier?: 'rule';
+  textClassifierProfile?: string;
 }
 
 export interface CSSOptions {

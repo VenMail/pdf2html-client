@@ -33,8 +33,10 @@ export class ImprovedTextMerger {
         current.text += (insertSpace ? ' ' : '') + item.text;
         const endX = Math.max(current.x + current.width, item.x + item.width);
         current.width = Math.max(0, endX - current.x);
-        current.height = Math.max(current.height, item.height);
-        current.y = Math.abs(current.y - item.y) <= 1.0 ? current.y : Math.max(current.y, item.y);
+        const mergedTop = Math.max(current.y + current.height, item.y + item.height);
+        const mergedBottom = Math.min(current.y, item.y);
+        current.y = mergedBottom;
+        current.height = Math.max(0, mergedTop - mergedBottom);
         lastItem = item;
       } else {
         merged.push(current);

@@ -49,8 +49,8 @@ describe('PDFJSTextExtractor', () => {
     expect(result.text).toHaveLength(1);
     const text = result.text[0];
     expect(text.rotation).toBeCloseTo(90, 5);
-    // y should flip from PDF bottom to HTML top
-    expect(text.y).toBeCloseTo(1000 - 20);
+    // y is kept in PDF space (origin bottom-left) and flipped later in layout/rendering
+    expect(text.y).toBeCloseTo(20);
     // width/height scaled by matrix magnitude (here scale 1)
     expect(text.width).toBeGreaterThan(0);
     expect(text.height).toBeGreaterThan(0);

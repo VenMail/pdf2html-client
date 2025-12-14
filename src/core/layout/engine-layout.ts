@@ -10,6 +10,11 @@ import { DocumentStatisticsAnalyzer } from './stats.js';
 import { ImprovedTextMerger } from './text-merger.js';
 import { StatisticalSpaceDetector } from './space-detector.js';
 import { ObstacleCollector } from './obstacles.js';
+import { TextReconstructionPipelineV2 } from '../text-pipeline/pipeline.js';
+import { normalizeGlyphItems } from '../text-pipeline/normalizer.js';
+import { buildLineGeometryModel } from '../text-pipeline/line-model.js';
+import { getClassifierProfile, resolveScriptForGlyphs } from '../text-pipeline/classifier-db.js';
+import { RuleBoundaryClassifier } from '../text-pipeline/rule-classifier.js';
 
 export class RegionLayoutAnalyzer {
   private statsAnalyzer = new DocumentStatisticsAnalyzer();
@@ -17,6 +22,131 @@ export class RegionLayoutAnalyzer {
   private stats: DocumentStatistics | null = null;
   private spaceDetector: StatisticalSpaceDetector | null = null;
   private textMerger: ImprovedTextMerger | null = null;
+  private textPipeline: 'legacy' | 'v2';
+  private pipelineV2: TextReconstructionPipelineV2 | null = null;
+  private textClassifierProfile?: string;
+
+  constructor(options?: { textPipeline?: 'legacy' | 'v2'; textClassifierProfile?: string }) {
+    this.textPipeline = options?.textPipeline ?? 'legacy';
+    this.textClassifierProfile = options?.textClassifierProfile;
+    this.pipelineV2 = this.textPipeline === 'v2'
+      ? new TextReconstructionPipelineV2({ classifierProfile: this.textClassifierProfile })
+      : null;
+  }
+
+  reconstructLineTokens(items: PDFTextContent[]): Array<
+    | { type: 'text'; text: string; sample: PDFTextContent }
+    | { type: 'space' }
+  > {
+    if (!items || items.length === 0) return [];
+
+    if (this.textPipeline === 'v2') {
+      const glyphs = normalizeGlyphItems(items);
+      if (glyphs.length === 0) return [];
+      const model = buildLineGeometryModel(glyphs);
+
+      const profile = getClassifierProfile(this.textClassifierProfile);
+      const resolvedScript = profile.script === 'auto' ? resolveScriptForGlyphs(glyphs) : profile.script;
+      const classifier = new RuleBoundaryClassifier();
+      const ctx = { profile, resolvedScript };
+
+      const styleKey = (t: PDFTextContent): string => [
+        t.fontFamily,
+        String(t.fontSize),
+        String(t.fontWeight),
+        String(t.fontStyle),
+        String(t.color)
+      ].join('|');
+
+      const out: Array<{ type: 'text'; text: string; sample: PDFTextContent } | { type: 'space' }> = [];
+      let current: { type: 'text'; text: string; sample: PDFTextContent } | null = null;
+      let pendingSpace = false;
+
+      for (let i = 0; i < glyphs.length; i++) {
+        const g = glyphs[i];
+        const source = g.source;
+        if (!source) continue;
+
+        if (!current) {
+          current = { type: 'text', text: g.text, sample: source };
+          pendingSpace = false;
+          continue;
+        }
+
+        const prev = glyphs[i - 1];
+        const d = classifier.classify(prev, g, model, ctx);
+        pendingSpace = d.type === 'space';
+
+        const prevKey = styleKey(current.sample);
+        const nextKey = styleKey(source);
+        const styleChanged = prevKey !== nextKey;
+
+        if (styleChanged) {
+          out.push(current);
+          if (pendingSpace) out.push({ type: 'space' });
+          current = { type: 'text', text: g.text, sample: source };
+          pendingSpace = false;
+          continue;
+        }
+
+        if (pendingSpace) {
+          current.text += ' ';
+          pendingSpace = false;
+        }
+        current.text += g.text;
+      }
+
+      if (current) out.push(current);
+      return out;
+    }
+
+    // Legacy: use StatisticalSpaceDetector decisions but still segment by style.
+    const ordered = [...items].sort((a, b) => a.x - b.x);
+    const lineModel = this.spaceDetector ? this.spaceDetector.buildLineGapModel(ordered) : undefined;
+
+    const styleKey = (t: PDFTextContent): string => [
+      t.fontFamily,
+      String(t.fontSize),
+      String(t.fontWeight),
+      String(t.fontStyle),
+      String(t.color)
+    ].join('|');
+
+    const out: Array<{ type: 'text'; text: string; sample: PDFTextContent } | { type: 'space' }> = [];
+    let current: { type: 'text'; text: string; sample: PDFTextContent } | null = null;
+    let prevItem: PDFTextContent | undefined;
+
+    for (const item of ordered) {
+      if (!current) {
+        current = { type: 'text', text: item.text, sample: item };
+        prevItem = item;
+        continue;
+      }
+
+      const insertSpace =
+        !!prevItem &&
+        !!this.spaceDetector &&
+        this.spaceDetector.shouldInsertSpace(prevItem, item, { lineModel });
+
+      const prevKey = styleKey(current.sample);
+      const nextKey = styleKey(item);
+      const styleChanged = prevKey !== nextKey;
+
+      if (styleChanged) {
+        out.push(current);
+        if (insertSpace) out.push({ type: 'space' });
+        current = { type: 'text', text: item.text, sample: item };
+      } else {
+        if (insertSpace) current.text += ' ';
+        current.text += item.text;
+      }
+
+      prevItem = item;
+    }
+
+    if (current) out.push(current);
+    return out;
+  }
 
   analyze(page: PDFPage): PageTextRegionLayout {
     const items = page.content.text || [];
@@ -93,6 +223,37 @@ export class RegionLayoutAnalyzer {
     }));
   }
 
+  reconstructLineText(items: PDFTextContent[]): string {
+    if (!items || items.length === 0) return '';
+
+    if (this.textPipeline === 'v2' && this.pipelineV2) {
+      const raw = this.pipelineV2.reconstructLineText(items);
+      if (/(https?:\/\/|www\.)/i.test(raw)) return raw;
+      return this.normalizeText(raw);
+    }
+
+    if (!this.spaceDetector) {
+      return items.map((i) => i.text).join('');
+    }
+
+    const ordered = [...items].sort((a, b) => a.x - b.x);
+    const lineModel = this.spaceDetector.buildLineGapModel(ordered);
+
+    const parts: string[] = [];
+    let prev: PDFTextContent | undefined;
+    for (const t of ordered) {
+      if (prev && this.spaceDetector.shouldInsertSpace(prev, t, { lineModel })) {
+        parts.push(' ');
+      }
+      parts.push(t.text);
+      prev = t;
+    }
+
+    const out = parts.join('');
+    if (/(https?:\/\/|www\.)/i.test(out)) return out;
+    return this.normalizeText(out);
+  }
+
   private groupIntoLines(items: PDFTextContent[], pageHeight: number, medianHeight: number): TextLine[] {
     const sorted = [...items].sort((a, b) => {
       const yDiff = b.y - a.y;
@@ -103,7 +264,12 @@ export class RegionLayoutAnalyzer {
     const lines: Array<{ items: PDFTextContent[]; ySum: number; yCount: number; height: number; fontSizeSum: number; fontMap: Map<string, number> }> = [];
 
     for (const item of sorted) {
-      const tol = Math.max(1.5, Math.min(medianHeight, Math.max(1, item.height)) * 0.45);
+      const baseTol = Math.max(1.5, Math.min(medianHeight, Math.max(1, item.height)) * 0.45);
+      const isTiny = Math.max(1, item.height) < Math.max(2, medianHeight * 0.6);
+      const isPunctOrQuote = item.text.length <= 2 && /[\u2018\u2019\u201C\u201D'"`.,;:!?()[\]{}]/.test(item.text);
+      const tol = (isTiny && isPunctOrQuote)
+        ? Math.max(baseTol, Math.max(2, medianHeight * 0.85))
+        : baseTol;
       let target: (typeof lines)[number] | undefined;
 
       for (const line of lines) {
@@ -243,27 +409,7 @@ export class RegionLayoutAnalyzer {
     const paragraphGap = Math.max(4, (this.stats?.medianHeight || 12) * 0.8);
     const indentBreak = Math.max(10, (this.stats?.medianHeight || 12) * 1.2);
 
-    const lineToText = (line: TextLine): string => {
-      if (!this.spaceDetector) return line.items.map((i) => i.text).join('');
-
-      if (!line.items || line.items.length === 0) return '';
-
-      const lineModel = this.spaceDetector.buildLineGapModel(line.items);
-
-      const parts: string[] = [];
-      let prev: PDFTextContent | undefined;
-      for (const t of line.items) {
-        if (prev && this.spaceDetector.shouldInsertSpace(prev, t, { lineModel })) {
-          parts.push(' ');
-        }
-        parts.push(t.text);
-        prev = t;
-      }
-
-      const out = parts.join('');
-      if (/(https?:\/\/|www\.)/i.test(out)) return out;
-      return this.normalizeText(out);
-    };
+    const lineToText = (line: TextLine): string => this.reconstructLineText(line.items);
 
     const mergeHyphenation = (a: string, b: string): { mergedA: string; mergedB: string; joined: boolean } => {
       const aTrim = a.replace(/\s+$/g, '');
@@ -291,6 +437,25 @@ export class RegionLayoutAnalyzer {
       return { mergedA: aTrim, mergedB: bTrim, joined: false };
     };
 
+    const mergeLineBreakContinuation = (a: string, b: string): { mergedA: string; mergedB: string; joined: boolean } => {
+      const aTrim = a.replace(/\s+$/g, '');
+      const bTrim = b.replace(/^\s+/g, '');
+
+      if (aTrim.length === 0 || bTrim.length === 0) {
+        return { mergedA: aTrim, mergedB: bTrim, joined: false };
+      }
+
+      const aEndsWithShortCapPrefix = /[A-Z][a-z]{0,2}$/.test(aTrim);
+      const bStartsLowerContinuation = /^[a-z]{3,}/.test(bTrim);
+      const aEndsWithPunct = /[\][)(}{,.;:!?]$/.test(aTrim);
+
+      if (aEndsWithShortCapPrefix && bStartsLowerContinuation && !aEndsWithPunct) {
+        return { mergedA: aTrim, mergedB: bTrim, joined: true };
+      }
+
+      return { mergedA: aTrim, mergedB: bTrim, joined: false };
+    };
+
     let current: TextRegion['paragraphs'][number] | undefined;
     let prevLine: TextLine | undefined;
 
@@ -307,7 +472,7 @@ export class RegionLayoutAnalyzer {
           lineHeight: Math.max(1, Math.round(line.height))
         };
         paragraphs.push(current);
-        current.lines.push({ text: lineTextRaw, indent });
+        current.lines.push({ text: lineTextRaw, indent, sourceLine: line });
         prevLine = line;
         continue;
       }
@@ -327,7 +492,7 @@ export class RegionLayoutAnalyzer {
           lineHeight: Math.max(1, Math.round(line.height))
         };
         paragraphs.push(current);
-        current.lines.push({ text: lineTextRaw, indent });
+        current.lines.push({ text: lineTextRaw, indent, sourceLine: line });
         prevLine = line;
         continue;
       }
@@ -336,13 +501,22 @@ export class RegionLayoutAnalyzer {
       if (prevLineEntry) {
         const merged = mergeHyphenation(prevLineEntry.text, lineTextRaw);
         if (merged.joined) {
-          prevLineEntry.text = merged.mergedA + merged.mergedB;
+          prevLineEntry.text = merged.mergedA;
+          current.lines.push({ text: lineTextRaw, indent, sourceLine: line, joinWithPrev: 'hyphenation' });
+          prevLine = line;
+          continue;
+        }
+
+        const mergedContinuation = mergeLineBreakContinuation(prevLineEntry.text, lineTextRaw);
+        if (mergedContinuation.joined) {
+          prevLineEntry.text = mergedContinuation.mergedA;
+          current.lines.push({ text: lineTextRaw, indent, sourceLine: line, joinWithPrev: 'continuation' });
           prevLine = line;
           continue;
         }
       }
 
-      current.lines.push({ text: lineTextRaw, indent });
+      current.lines.push({ text: lineTextRaw, indent, sourceLine: line });
       prevLine = line;
     }
 

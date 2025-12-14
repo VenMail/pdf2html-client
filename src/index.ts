@@ -8,12 +8,12 @@ import type { OCRResult } from './types/ocr.js';
 import type { OCRPageResult } from './types/ocr.js';
 import { PDFParser } from './core/pdf-parser.js';
 import { RegionLayoutAnalyzer } from './core/region-layout.js';
-import { OCRProcessor } from './ocr/ocr-processor.js';
 import { FontDetector } from './fonts/font-detector.js';
 import { FontMapper } from './fonts/font-mapper.js';
 import { HTMLGenerator } from './html/html-generator.js';
 
 import type { OCREngine } from './ocr/ocr-engine.js';
+import type { OCRProcessor } from './ocr/ocr-processor.js';
 
 export class PDF2HTML {
   private config: PDF2HTMLConfig;
@@ -132,10 +132,8 @@ export class PDF2HTML {
       }
 
       if (!this.ocrProcessor) {
-        this.ocrProcessor = new OCRProcessor(
-          this.ocrEngine!,
-          this.config.ocrProcessorOptions
-        );
+        const { OCRProcessor } = await import('./ocr/ocr-processor.js');
+        this.ocrProcessor = new OCRProcessor(this.ocrEngine!, this.config.ocrProcessorOptions);
       }
 
       ocrResults = await this.ocrProcessor!.processPages(document.pages);

@@ -111,6 +111,30 @@ export class PDFJSTextExtractor {
     const fontSize = style?.fontSize || item.height || 12;
     const fontFamily = style?.fontFamily || 'Arial';
     const fontNameLower = (style?.fontName || item.fontName || '').toLowerCase();
+    const fontFamilyLower = (fontFamily || '').toLowerCase();
+
+    const deriveWeight = (s: string): number => {
+      if (!s) return 400;
+      if (s.includes('thin') || s.includes('100')) return 100;
+      if (s.includes('extralight') || s.includes('200')) return 200;
+      if (s.includes('light') || s.includes('300')) return 300;
+      if (s.includes('medium') || s.includes('500')) return 500;
+      if (s.includes('semibold') || s.includes('600')) return 600;
+      if (s.includes('bold') || s.includes('700')) return 700;
+      if (s.includes('extrabold') || s.includes('800')) return 800;
+      if (s.includes('black') || s.includes('900')) return 900;
+      return 400;
+    };
+
+    const deriveStyle = (s: string): 'normal' | 'italic' | 'oblique' => {
+      if (!s) return 'normal';
+      if (s.includes('italic')) return 'italic';
+      if (s.includes('oblique')) return 'oblique';
+      return 'normal';
+    };
+
+    const weight = Math.max(deriveWeight(fontNameLower), deriveWeight(fontFamilyLower));
+    const styleHint = (deriveStyle(fontNameLower) !== 'normal') ? deriveStyle(fontNameLower) : deriveStyle(fontFamilyLower);
 
     // Estimate width and height
     // Use transform scale when present to avoid clipping rotated/scaled text
@@ -130,8 +154,8 @@ export class PDFJSTextExtractor {
       height,
       fontSize,
       fontFamily,
-      fontWeight: fontNameLower.includes('bold') ? 700 : 400,
-      fontStyle: fontNameLower.includes('italic') || fontNameLower.includes('oblique') ? 'italic' : 'normal',
+      fontWeight: weight,
+      fontStyle: styleHint,
       color: '#000000', // Default, could be extracted from graphics state
       fontInfo: item.fontName ? this.extractFontInfo(item.fontName, style as PDFJSFontStyle | undefined) as PDFFontInfo | undefined : undefined,
       rotation: rotationDeg

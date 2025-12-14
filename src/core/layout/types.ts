@@ -35,6 +35,8 @@ export type TextRegion = {
     lines: Array<{
       text: string;
       indent: number;
+      sourceLine?: TextLine;
+      joinWithPrev?: 'hyphenation' | 'continuation';
     }>;
     top: number;
     gapBefore: number;

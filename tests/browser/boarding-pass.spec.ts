@@ -24,6 +24,7 @@ interface ConversionResult {
 type Pdf2HtmlOutput = {
   html: string;
   css: string;
+  text?: string;
   metadata: {
     pageCount: number;
     fontMappings?: number;
@@ -243,6 +244,118 @@ test.describe('Boarding Pass PDF Conversion', () => {
     }
   });
 
+  test('should convert boarding_pass.pdf with v2 classifier (smoke)', async ({ page }) => {
+    const pdfBuffer = readFileSync(pdfPath);
+    const pdfBase64 = pdfBuffer.toString('base64');
+    const pdfDataUrl = `data:application/pdf;base64,${pdfBase64}`;
+
+    const result: ConversionResult = await page.evaluate(async (pdfData) => {
+      try {
+        const base64 = pdfData.split(',')[1];
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        const arrayBuffer = bytes.buffer;
+
+        const PDF2HTML = (window as unknown as TestWindow).PDF2HTML;
+        if (!PDF2HTML) {
+          throw new Error('PDF2HTML not available');
+        }
+
+        const apiKey = (window as unknown as TestWindow).__GOOGLE_API_KEY__ || '';
+
+        const converter = new PDF2HTML({
+          enableOCR: false,
+          enableFontMapping: false,
+          htmlOptions: {
+            format: 'html+inline-css',
+            preserveLayout: true,
+            textLayout: 'smart',
+            responsive: false,
+            darkMode: false,
+            includeExtractedText: true,
+            textPipeline: 'v2',
+            textClassifierProfile: 'latin-default',
+          },
+          fontMappingOptions: {
+            googleApiKey: apiKey,
+          },
+        });
+
+        const startTime = performance.now();
+        const output = (await converter.convert(arrayBuffer)) as Pdf2HtmlOutput;
+        const processingTime = performance.now() - startTime;
+
+        const textContent = (() => {
+          if (typeof output.text === 'string' && output.text.trim().length > 0) {
+            return output.text;
+          }
+          try {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(output.html, 'text/html');
+            doc.querySelectorAll('style, script, noscript').forEach((el) => el.remove());
+            doc.querySelectorAll('br').forEach((br) => br.replaceWith('\n'));
+            const raw = doc.body?.textContent || '';
+            return raw.replace(/\s+/g, ' ').trim();
+          } catch {
+            return output.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+          }
+        })();
+
+        converter.dispose();
+
+        return {
+          success: true,
+          pageCount: output.metadata.pageCount,
+          processingTime: Math.round(processingTime),
+          html: output.html,
+          css: output.css,
+          textContent
+        };
+      } catch (error: unknown) {
+        return {
+          success: false,
+          pageCount: 0,
+          processingTime: 0,
+          error: getErrorMessage(error)
+        };
+      }
+    }, pdfDataUrl);
+
+    expect(result.success, 'Conversion should succeed').toBe(true);
+    if (result.error) {
+      console.error('Conversion error:', result.error);
+      throw new Error(result.error);
+    }
+
+    expect(result.pageCount).toBeGreaterThan(0);
+    expect(result.html).toBeDefined();
+
+    const html = result.html!;
+    const textContent = result.textContent || '';
+
+    const requiredTexts = [
+      'Record Locator',
+      'GCOXAX',
+      'eTicket',
+      '0712156116699',
+      'ET 902',
+      'Murtala Muhammed International Airport',
+      'Bole International'
+    ];
+
+    for (const requiredText of requiredTexts) {
+      const found =
+        textContent.toUpperCase().includes(requiredText.toUpperCase()) ||
+        html.includes(requiredText);
+      if (!found) {
+        console.log(`Missing expected text (non-fatal): ${requiredText}`);
+      }
+    }
+  });
+
   test('should convert boarding_pass.pdf with high fidelity', async ({ page }) => {
     const pdfBuffer = readFileSync(pdfPath);
     const pdfBase64 = pdfBuffer.toString('base64');
@@ -274,6 +387,7 @@ test.describe('Boarding Pass PDF Conversion', () => {
             textLayout: 'smart',
             responsive: false,
             darkMode: false,
+            includeExtractedText: true,
           },
           fontMappingOptions: {
             googleApiKey: apiKey,
@@ -285,6 +399,10 @@ test.describe('Boarding Pass PDF Conversion', () => {
         const processingTime = performance.now() - startTime;
 
         const textContent = (() => {
+          if (typeof output.text === 'string' && output.text.trim().length > 0) {
+            return output.text;
+          }
+
           try {
             const parser = new DOMParser();
             const doc = parser.parseFromString(output.html, 'text/html');

@@ -86,7 +86,9 @@ export class UnPDFWrapper {
 
   private async getUnpdf(): Promise<UnpdfModule> {
     if (!cachedUnpdf) {
-      cachedUnpdf = import('unpdf') as unknown as Promise<UnpdfModule>;
+      // Use Function constructor to avoid Vite/Vitest SSR rewriting dynamic imports into thenable modules.
+      const importUnpdf = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
+      cachedUnpdf = importUnpdf('unpdf') as Promise<UnpdfModule>;
     }
     return await cachedUnpdf;
   }
@@ -95,7 +97,8 @@ export class UnPDFWrapper {
     if (unpdfPdfjsDefined) return;
     const unpdf = await this.getUnpdf();
     if (typeof unpdf.definePDFJSModule === 'function') {
-      await unpdf.definePDFJSModule(() => import('pdfjs-dist'));
+      const importPdfjs = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
+      await unpdf.definePDFJSModule(() => importPdfjs('pdfjs-dist'));
     }
     unpdfPdfjsDefined = true;
   }

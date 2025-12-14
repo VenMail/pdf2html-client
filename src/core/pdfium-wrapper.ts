@@ -556,7 +556,7 @@ export class PDFiumWrapper {
                   const gap = x - xEnd;
                   const adjacentTol = Math.max(0.6, Math.min(2.0, fontSize * 0.1));
                   const lineTol = Math.max(0.75, Math.min(2.5, Math.max(current.height, h) * 0.35));
-                  const sameLine = Math.abs(y - current.y) <= lineTol;
+                  const sameLine = Math.abs((y + h) - (current.y + current.height)) <= lineTol;
                   const adjacent = Math.abs(gap) <= adjacentTol;
                   const spaceTol = Math.max(adjacentTol + 0.25, Math.min(fontSize * 0.95, adjacentTol + fontSize * 0.55));
 
@@ -569,7 +569,10 @@ export class PDFiumWrapper {
                           pending.__pendingSpaceXEnd = xEnd;
                         }
                         current.width = Math.max(current.width, (x + w) - current.x);
-                        current.height = Math.max(current.height, h);
+                        const mergedTop = Math.max(current.y + current.height, y + h);
+                        const mergedBottom = Math.min(current.y, y);
+                        current.y = mergedBottom;
+                        current.height = Math.max(0, mergedTop - mergedBottom);
                         continue;
                       }
                     }
@@ -637,7 +640,10 @@ export class PDFiumWrapper {
 
                       current.text += ch;
                       current.width = Math.max(current.width, (x + w) - current.x);
-                      current.height = Math.max(current.height, h);
+                      const mergedTop = Math.max(current.y + current.height, y + h);
+                      const mergedBottom = Math.min(current.y, y);
+                      current.y = mergedBottom;
+                      current.height = Math.max(0, mergedTop - mergedBottom);
                       continue;
                     }
 
