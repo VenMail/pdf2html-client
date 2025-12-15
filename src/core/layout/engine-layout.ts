@@ -25,10 +25,27 @@ export class RegionLayoutAnalyzer {
   private textPipeline: 'legacy' | 'v2';
   private pipelineV2: TextReconstructionPipelineV2 | null = null;
   private textClassifierProfile?: string;
+  private lineGroupingFontSizeFactor: number;
 
-  constructor(options?: { textPipeline?: 'legacy' | 'v2'; textClassifierProfile?: string }) {
+  private sanitizeExtractedText(s: string): string {
+    if (!s) return s;
+    let out = '';
+    for (let i = 0; i < s.length; i++) {
+      const code = s.charCodeAt(i);
+      const isAllowedWhitespace = code === 9 || code === 10 || code === 13;
+      const isControl = (code >= 0 && code <= 31) || (code >= 127 && code <= 159);
+      if (isControl && !isAllowedWhitespace) continue;
+      out += s[i] ?? '';
+    }
+    return out;
+  }
+
+  constructor(options?: { textPipeline?: 'legacy' | 'v2'; textClassifierProfile?: string; lineGroupingFontSizeFactor?: number }) {
     this.textPipeline = options?.textPipeline ?? 'legacy';
     this.textClassifierProfile = options?.textClassifierProfile;
+    this.lineGroupingFontSizeFactor = typeof options?.lineGroupingFontSizeFactor === 'number'
+      ? options.lineGroupingFontSizeFactor
+      : 0.85;
     this.pipelineV2 = this.textPipeline === 'v2'
       ? new TextReconstructionPipelineV2({ classifierProfile: this.textClassifierProfile })
       : null;
@@ -114,14 +131,20 @@ export class RegionLayoutAnalyzer {
 
         if (styleChanged) {
           out.push(current);
-          if (pendingSpace) out.push({ type: 'space' });
+          if (pendingSpace) {
+            if (!/\s$/.test(current.text)) {
+              out.push({ type: 'space' });
+            }
+          }
           current = { type: 'text', text: g.text, sample: source };
           pendingSpace = false;
           continue;
         }
 
         if (pendingSpace) {
-          current.text += ' ';
+          if (!/\s$/.test(current.text)) {
+            current.text += ' ';
+          }
           pendingSpace = false;
         }
         current.text += g.text;
@@ -180,7 +203,7 @@ export class RegionLayoutAnalyzer {
   }
 
   analyze(page: PDFPage): PageTextRegionLayout {
-    const items = page.content.text || [];
+    const items = (page.content.text || []).map((t) => (t.text ? { ...t, text: this.sanitizeExtractedText(t.text) } : t));
     const nonEmpty = items.filter((t) => t.text && t.text.trim().length > 0);
 
     // Precompute median height for line grouping tolerance
@@ -295,11 +318,15 @@ export class RegionLayoutAnalyzer {
     const lines: Array<{ items: PDFTextContent[]; ySum: number; yCount: number; height: number; fontSizeSum: number; fontMap: Map<string, number> }> = [];
 
     for (const item of sorted) {
-      const anchorY = item.y + item.height;
-      const baseTol = Math.max(1.5, Math.min(medianHeight, Math.max(1, item.height)) * 0.45);
-      const isTiny = Math.max(1, item.height) <= Math.max(2, medianHeight * 0.6);
+      // Some extractors (notably PDFium in certain PDFs) report glyph bounding boxes that are
+      // significantly smaller than the actual rendered font size. Use a font-size-based proxy
+      // to make line grouping and heights more stable.
+      const visualHeight = Math.max(1, item.height, item.fontSize * this.lineGroupingFontSizeFactor);
+      const anchorY = item.y + visualHeight;
+      const baseTol = Math.max(1.5, Math.min(medianHeight, visualHeight) * 0.45);
+      const isTiny = visualHeight <= Math.max(2, medianHeight * 0.6);
       const isPunctOrQuote = item.text.length <= 2 && /[\u2018\u2019\u201C\u201D'"`.,;:!?()[\]{}]/.test(item.text);
-      const punctEligible = isPunctOrQuote && Math.max(1, item.height) <= Math.max(3, medianHeight * 0.8);
+      const punctEligible = isPunctOrQuote && visualHeight <= Math.max(3, medianHeight * 0.8);
       const tol = (punctEligible || (isTiny && isPunctOrQuote))
         ? Math.max(baseTol, Math.max(2, medianHeight * 0.85))
         : baseTol;
@@ -314,25 +341,91 @@ export class RegionLayoutAnalyzer {
       }
 
       if (!target) {
-        lines.push({ items: [item], ySum: anchorY, yCount: 1, height: item.height, fontSizeSum: item.fontSize, fontMap: new Map([[item.fontFamily, 1]]) });
+        lines.push({ items: [item], ySum: anchorY, yCount: 1, height: visualHeight, fontSizeSum: item.fontSize, fontMap: new Map([[item.fontFamily, 1]]) });
       } else {
         target.items.push(item);
         target.ySum += anchorY;
         target.yCount += 1;
-        target.height = Math.max(target.height, item.height);
+        target.height = Math.max(target.height, visualHeight);
         target.fontSizeSum += item.fontSize;
         target.fontMap.set(item.fontFamily, (target.fontMap.get(item.fontFamily) || 0) + 1);
+      }
+    }
+
+    const isPunctOnlyLine = (line: (typeof lines)[number]): boolean => {
+      const nonEmpty = line.items.filter((t) => (t.text || '').trim().length > 0);
+      if (nonEmpty.length === 0) return false;
+      return nonEmpty.every((t) => /^[\u2018\u2019\u201C\u201D'"`.,;:!?()[\]{}]+$/.test((t.text || '').trim()));
+    };
+
+    const lineXSpan = (line: (typeof lines)[number]): { minX: number; maxX: number } => {
+      const xs = line.items.map((t) => t.x);
+      const x2 = line.items.map((t) => t.x + t.width);
+      return {
+        minX: xs.length > 0 ? Math.min(...xs) : 0,
+        maxX: x2.length > 0 ? Math.max(...x2) : 0
+      };
+    };
+
+    const punctMergeTol = Math.max(4, medianHeight * 1.8);
+    for (let i = 0; i < lines.length; i++) {
+      const punctLine = lines[i];
+      if (!punctLine || !isPunctOnlyLine(punctLine)) continue;
+
+      const punctY = punctLine.ySum / Math.max(1, punctLine.yCount);
+      const { minX: pMinX, maxX: pMaxX } = lineXSpan(punctLine);
+
+      let bestIdx = -1;
+      let bestDist = Number.POSITIVE_INFINITY;
+
+      for (let j = 0; j < lines.length; j++) {
+        if (j === i) continue;
+        const candidate = lines[j];
+        if (!candidate || isPunctOnlyLine(candidate)) continue;
+
+        const candY = candidate.ySum / Math.max(1, candidate.yCount);
+        const dist = Math.abs(candY - punctY);
+        if (dist > punctMergeTol) continue;
+
+        const { minX: cMinX, maxX: cMaxX } = lineXSpan(candidate);
+        const margin = Math.max(12, medianHeight * 1.2);
+        const xOverlaps = pMaxX >= cMinX - margin && pMinX <= cMaxX + margin;
+        if (!xOverlaps) continue;
+
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestIdx = j;
+        }
+      }
+
+      if (bestIdx >= 0) {
+        const target = lines[bestIdx];
+        target.items.push(...punctLine.items);
+        target.ySum += punctLine.ySum;
+        target.yCount += punctLine.yCount;
+        target.height = Math.max(target.height, punctLine.height);
+        target.fontSizeSum += punctLine.fontSizeSum;
+        for (const [font, count] of punctLine.fontMap) {
+          target.fontMap.set(font, (target.fontMap.get(font) || 0) + count);
+        }
+        lines.splice(i, 1);
+        i -= 1;
       }
     }
 
     const normalized: TextLine[] = lines
       .map((l) => {
         const lineItems = [...l.items].sort((a, b) => a.x - b.x);
+        const alphaNumItems = lineItems.filter((t) => /[\p{L}\p{N}]/u.test(t.text || ''));
+        const topItems = alphaNumItems.length > 0 ? alphaNumItems : lineItems;
         const minX = Math.min(...lineItems.map((t) => t.x));
         const maxX = Math.max(...lineItems.map((t) => t.x + t.width));
-        const topPdf = Math.max(...lineItems.map((t) => t.y + t.height));
+        const heightFactor = Math.max(1, this.lineGroupingFontSizeFactor);
+        const topPdf = Math.max(
+          ...topItems.map((t) => t.y + Math.max(1, t.height, t.fontSize * heightFactor))
+        );
         const top = pageHeight - topPdf;
-        const height = Math.max(1, Math.round(Math.max(...lineItems.map((t) => t.height))));
+        const height = Math.max(1, Math.round(Math.max(...topItems.map((t) => Math.max(1, t.height, t.fontSize * heightFactor)))));
         const hasRotation = lineItems.some((t) => typeof t.rotation === 'number' && Math.abs(t.rotation) > 0.01);
         const avgFontSize = l.fontSizeSum / Math.max(1, l.items.length);
         let dominantFont = 'default';
@@ -558,9 +651,11 @@ export class RegionLayoutAnalyzer {
 
   private normalizeText(s: string): string {
     if (!s) return s;
+    s = this.sanitizeExtractedText(s);
     const needsNormalization =
       /\b[A-Z]{2,3}[0-9]{2,4}\b/.test(s) ||
-      /\b(to|with|for|and|of|at|in|on|as)[A-Z][a-z]/.test(s) ||
+      /\b[A-Z]{2,3}\s+[0-9]{2,4}\b/.test(s) ||
+      /\b[A-Z]{2,3}\s*-\s*[0-9]{2,4}\b/.test(s) ||
       /[a-z]{4,}(to|with|for|and|of|at|in|on|as)[A-Z][a-z]/.test(s) ||
       /[a-z]{4,}[A-Z][a-z]/.test(s) ||
       /[A-Z][a-z]{2,}[A-Z][a-z]{2,}/.test(s) ||

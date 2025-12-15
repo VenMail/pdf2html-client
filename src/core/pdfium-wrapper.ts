@@ -5,6 +5,8 @@ import type {
   PDFMetadata,
   PDFGraphicsContent
 } from '../types/pdf.js';
+import { getDefaultFontMetricsResolver } from '../fonts/font-metrics-resolver.js';
+import { deriveFontWeightAndStyle } from '../fonts/font-style.js';
 
 type PdfiumInitOptions = {
   wasmUrl?: string;
@@ -454,6 +456,15 @@ export class PDFiumWrapper {
             try {
               const charCount = this.pdfium.FPDFText_CountChars(textPagePtr);
 
+              const g = globalThis as unknown as {
+                __PDF2HTML_DEBUG_PDFIUM__?: boolean;
+                __PDF2HTML_PDFIUM_DEBUG__?: unknown[];
+              };
+              const debugEnabled = g.__PDF2HTML_DEBUG_PDFIUM__ === true;
+              if (debugEnabled) {
+                if (!Array.isArray(g.__PDF2HTML_PDFIUM_DEBUG__)) g.__PDF2HTML_PDFIUM_DEBUG__ = [];
+              }
+
               const leftPtr = this.allocDouble();
               const rightPtr = this.allocDouble();
               const bottomPtr = this.allocDouble();
@@ -479,10 +490,105 @@ export class PDFiumWrapper {
 
                 const decoder = new TextDecoder('utf-8');
 
+                const fontScaleByFont: Map<string, number> = new Map();
+                {
+                  const samplesByFont: Map<string, number[]> = new Map();
+                  const defaultMinScale = 0.75;
+                  const adaptiveMinScale = 0.6;
+                  const adaptiveMinSamples = 30;
+                  const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
+                  const median = (vals: number[]): number => {
+                    if (!vals || vals.length === 0) return 1;
+                    const s = [...vals].sort((a, b) => a - b);
+                    const mid = Math.floor(s.length / 2);
+                    if (s.length % 2 === 1) return s[mid]!;
+                    return (s[mid - 1]! + s[mid]!) / 2;
+                  };
+
+                  const resolver = getDefaultFontMetricsResolver();
+                  const capRatioByFont: Map<string, number> = new Map();
+                  const getCapRatio = (fontName: string): number => {
+                    const key = fontName || 'Unknown';
+                    const cached = capRatioByFont.get(key);
+                    if (typeof cached === 'number') return cached;
+                    const match = resolver.resolveByName(fontName || '');
+                    const m = match.record.metrics;
+                    const u = m.unitsPerEm > 0 ? m.unitsPerEm : 1000;
+                    const capRatio = m.capHeight > 0 ? m.capHeight / u : 0.7;
+                    capRatioByFont.set(key, capRatio);
+                    return capRatio;
+                  };
+
+                  for (let i = 0; i < charCount; i++) {
+                    const codePoint = this.pdfium.FPDFText_GetUnicode(textPagePtr, i);
+                    if (!codePoint) continue;
+                    const ch = String.fromCodePoint(codePoint);
+                    if (ch === '\r' || ch === '\n' || ch === '\t') continue;
+
+                    const okBox = this.pdfium.FPDFText_GetCharBox(
+                      textPagePtr,
+                      i,
+                      leftPtr,
+                      rightPtr,
+                      bottomPtr,
+                      topPtr
+                    );
+                    if (!okBox) continue;
+                    const bottom = this.readFloat64(bottomPtr);
+                    const top = this.readFloat64(topPtr);
+                    const h = Math.max(0, top - bottom);
+
+                    // Skip whitespace and tiny/zero glyphs.
+                    if (/^\s$/.test(ch) || h <= 0.5) continue;
+
+                    const fs = this.pdfium.FPDFText_GetFontSize(textPagePtr, i);
+                    if (!Number.isFinite(fs) || fs <= 0) continue;
+                    if (fs < 6 || fs > 72) continue;
+
+                    const fontLen = this.pdfium.FPDFText_GetFontInfo(textPagePtr, i, fontBufPtr, 512, flagsPtr);
+                    const fontName = fontLen > 0
+                      ? decoder.decode(
+                          new Uint8Array(
+                            this.pdfium.pdfium.HEAPU8.buffer,
+                            this.pdfium.pdfium.HEAPU8.byteOffset + fontBufPtr,
+                            Math.min(fontLen, 512)
+                          ).filter((v) => v !== 0)
+                        )
+                      : '';
+                    const key = fontName || 'Unknown';
+
+                    const capRatio = Math.max(0.1, getCapRatio(fontName));
+                    const ratio = h / Math.max(1, fs * capRatio);
+                    if (!Number.isFinite(ratio) || ratio <= 0) continue;
+                    // Only care about scaling down (ratio < 1).
+                    const r = clamp(ratio, 0.1, 1);
+
+                    const arr = samplesByFont.get(key);
+                    if (!arr) {
+                      samplesByFont.set(key, [r]);
+                    } else if (arr.length < 256) {
+                      arr.push(r);
+                    }
+                  }
+
+                  for (const [font, vals] of samplesByFont) {
+                    const m = median(vals);
+                    const minScale = (vals.length >= adaptiveMinSamples && m < defaultMinScale)
+                      ? adaptiveMinScale
+                      : defaultMinScale;
+                    const scale = clamp(m, minScale, 1);
+                    fontScaleByFont.set(font, scale);
+                  }
+                }
+
                 for (let i = 0; i < charCount; i++) {
                   const codePoint = this.pdfium.FPDFText_GetUnicode(textPagePtr, i);
                   if (!codePoint) continue;
                   const ch = String.fromCodePoint(codePoint);
+
+                  if (ch === '\r' || ch === '\n' || ch === '\t') {
+                    continue;
+                  }
 
                   const okBox = this.pdfium.FPDFText_GetCharBox(
                     textPagePtr,
@@ -500,9 +606,13 @@ export class PDFiumWrapper {
                   const x = left;
                   const y = bottom;
                   const w = Math.max(0, right - left);
-                  const h = Math.max(0, top - bottom);
+                  const hBox = Math.max(0, top - bottom);
 
-                  const fontSize = this.pdfium.FPDFText_GetFontSize(textPagePtr, i);
+                  const fontSizeRaw = this.pdfium.FPDFText_GetFontSize(textPagePtr, i);
+
+                  if ((ch === '\r' || ch === '\n' || ch === '\t') && w <= 0.01 && hBox <= 0.01 && fontSizeRaw <= 2) {
+                    continue;
+                  }
                   const okColor = this.pdfium.FPDFText_GetFillColor(textPagePtr, i, rPtr, gPtr, bPtr, aPtr);
                   const rr = okColor ? this.readUInt32(rPtr) : 0;
                   const gg = okColor ? this.readUInt32(gPtr) : 0;
@@ -520,15 +630,83 @@ export class PDFiumWrapper {
                       )
                     : '';
 
+                  const fontScale = fontScaleByFont.get(fontName || 'Unknown') ?? 1;
+                  const fontSize = Math.max(1, Math.round(Math.max(1, fontSizeRaw) * fontScale * 1000) / 1000);
+                  const fontSizeForTol = Number.isFinite(fontSizeRaw) && fontSizeRaw > 0 ? fontSizeRaw : fontSize;
+
+                  const h = Math.max(0, hBox);
+
+                  const fontFlags = this.readUInt32(flagsPtr);
+
                   const fontWeightRaw = this.pdfium.FPDFText_GetFontWeight(textPagePtr, i);
-                  const fontWeight = fontWeightRaw > 0 ? fontWeightRaw : 400;
-                  const angleRad = this.pdfium.FPDFText_GetCharAngle(textPagePtr, i);
-                  const rotation = angleRad ? (angleRad * 180) / Math.PI : 0;
-
-                  const styleKey = `${fontName}|${fontSize}|${rr}|${gg}|${bb}|${aa}|${fontWeight}|${rotation}`;
-
-                  const isWhitespace = ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r';
                   const effectiveFontFamily = fontName || 'Unknown';
+                  const derived = deriveFontWeightAndStyle({ fontName, fontFamily: effectiveFontFamily, fontFlags });
+                  const derivedWeight = derived.derivedWeight;
+                  const fontWeight = fontWeightRaw > 0 ? Math.max(fontWeightRaw, derived.fontWeight) : derived.fontWeight;
+                  const angleRad = this.pdfium.FPDFText_GetCharAngle(textPagePtr, i);
+                  const rawRotation = angleRad ? (angleRad * 180) / Math.PI : 0;
+                  const normalizeDeg = (deg: number): number => {
+                    let d = deg;
+                    while (d > 180) d -= 360;
+                    while (d < -180) d += 360;
+                    return d;
+                  };
+                  const clampRotation = (deg: number): number => {
+                    const d = normalizeDeg(deg);
+                    const abs = Math.abs(d);
+                    // Most documents have horizontal text; per-char angle is often noisy.
+                    // Only keep rotations that are clearly intended (near 0 or near 90).
+                    if (abs < 1) return 0;
+                    const near90 = Math.abs(abs - 90);
+                    if (near90 < 1) return d < 0 ? -90 : 90;
+                    return 0;
+                  };
+                  const rotation = clampRotation(rawRotation);
+
+                  const fontStyle = derived.fontStyle;
+
+                  const styleKey = `${fontName}|${fontSizeForTol}|${rr}|${gg}|${bb}|${aa}|${fontWeight}|${fontStyle}|${rotation}`;
+
+                  // PDFium may emit a variety of Unicode whitespace characters (e.g., NBSP) depending on encoding.
+                  // Treat any single whitespace glyph as whitespace for merge/spacing heuristics.
+                  const isWhitespace = /^\s$/.test(ch);
+                  const effectiveFontFamily2 = effectiveFontFamily;
+
+                  if (debugEnabled && Array.isArray((globalThis as unknown as { __PDF2HTML_PDFIUM_DEBUG__?: unknown[] }).__PDF2HTML_PDFIUM_DEBUG__)) {
+                    const isLetter = /\p{L}/u.test(ch);
+                    const isNumber = /\p{N}/u.test(ch);
+                    const cpHex = `U+${codePoint.toString(16).toUpperCase().padStart(4, '0')}`;
+                    const record: Record<string, unknown> = {
+                      pageNumber,
+                      i,
+                      ch,
+                      cpHex,
+                      isWhitespace,
+                      isLetter,
+                      isNumber,
+                      x,
+                      y,
+                      w,
+                      h: hBox,
+                      fontSizeRaw,
+                      fontScale,
+                      fontSize,
+                      fontName,
+                      fontFlags,
+                      fontWeightRaw,
+                      derivedWeight,
+                      fontWeight,
+                      fontStyle,
+                      rawRotation,
+                      rotation,
+                    };
+
+                    const wobj = globalThis as unknown as { __PDF2HTML_PDFIUM_DEBUG__?: unknown[] };
+                    // Keep the debug log bounded.
+                    if (Array.isArray(wobj.__PDF2HTML_PDFIUM_DEBUG__) && wobj.__PDF2HTML_PDFIUM_DEBUG__.length < 10000) {
+                      wobj.__PDF2HTML_PDFIUM_DEBUG__.push(record);
+                    }
+                  }
 
                   if (!current) {
                     current = {
@@ -538,9 +716,9 @@ export class PDFiumWrapper {
                       width: w,
                       height: h,
                       fontSize,
-                      fontFamily: effectiveFontFamily,
+                      fontFamily: effectiveFontFamily2,
                       fontWeight,
-                      fontStyle: 'normal',
+                      fontStyle,
                       color: toCssColor(rr, gg, bb, aa),
                       rotation: rotation || undefined
                     };
@@ -554,19 +732,68 @@ export class PDFiumWrapper {
                   const sameStyle = prevKey === styleKey;
                   const xEnd = current.x + current.width;
                   const gap = x - xEnd;
-                  const adjacentTol = Math.max(0.6, Math.min(2.0, fontSize * 0.1));
-                  const lineTol = Math.max(0.75, Math.min(2.5, Math.max(current.height, h) * 0.35));
-                  const sameLine = Math.abs((y + h) - (current.y + current.height)) <= lineTol;
+                  const adjacentTol = Math.max(0.6, Math.min(2.0, fontSizeForTol * 0.1));
+                  const currentLineH = Math.max(current.height, fontSizeForTol * 0.9);
+                  const nextLineH = Math.max(h, fontSizeForTol * 0.9);
+                  const lineTol = Math.max(0.75, Math.min(2.5, Math.max(currentLineH, nextLineH) * 0.35));
+                  const sameLine = Math.abs((y + nextLineH) - (current.y + currentLineH)) <= lineTol;
                   const adjacent = Math.abs(gap) <= adjacentTol;
-                  const spaceTol = Math.max(adjacentTol + 0.25, Math.min(fontSize * 0.95, adjacentTol + fontSize * 0.55));
+                  const spaceTol = Math.max(adjacentTol + 0.25, Math.min(fontSizeForTol * 0.95, adjacentTol + fontSizeForTol * 0.55));
 
                   if (sameStyle && sameLine) {
+                    if (!isWhitespace && ch === '.') {
+                      const prevNonSpace = (current.text || '').replace(/\s+$/g, '').slice(-1);
+                      const nextCodePoint = i + 1 < charCount ? this.pdfium.FPDFText_GetUnicode(textPagePtr, i + 1) : 0;
+                      const nextCh = nextCodePoint ? String.fromCodePoint(nextCodePoint) : '';
+                      const isPrevAlphaNum = /[\p{L}\p{N}]/u.test(prevNonSpace);
+                      const isNextAlphaNum = /[\p{L}\p{N}]/u.test(nextCh);
+                      if (isPrevAlphaNum && isNextAlphaNum && gap >= -adjacentTol) {
+                        const maxDotGap = Math.max(spaceTol * 2.5, fontSizeForTol * 1.25);
+                        if (gap <= maxDotGap) {
+                          const pending = current as unknown as { __pendingSpace?: boolean; __pendingSpaceXEnd?: number };
+                          pending.__pendingSpace = false;
+                          pending.__pendingSpaceXEnd = undefined;
+                          current.text += ch;
+                          current.width = Math.max(current.width, (x + w) - current.x);
+                          const mergedTop = Math.max(current.y + current.height, y + h);
+                          const mergedBottom = Math.min(current.y, y);
+                          current.y = mergedBottom;
+                          current.height = Math.max(0, mergedTop - mergedBottom);
+                          continue;
+                        }
+                      }
+                    }
                     if (isWhitespace) {
                       if (gap >= -adjacentTol && gap <= spaceTol) {
+                        const prevChar = (current.text || '').slice(-1);
+                        const nextCodePoint = i + 1 < charCount ? this.pdfium.FPDFText_GetUnicode(textPagePtr, i + 1) : 0;
+                        const nextCh = nextCodePoint ? String.fromCodePoint(nextCodePoint) : '';
+                        const prevAlpha = /\p{L}$/u.test(prevChar);
+                        const nextAlpha = /^\p{L}$/u.test(nextCh);
+                        const caseBoundary = /\p{Ll}$/u.test(prevChar) && /^\p{Lu}$/u.test(nextCh);
+                        const looksLikeArtifactWhitespace =
+                          (w <= 0.01 && h <= 0.01) ||
+                          fontSizeRaw <= 2 ||
+                          !fontName ||
+                          fontWeightRaw < 0;
+                        const isIntraWordWhitespace = prevAlpha && nextAlpha && !caseBoundary && looksLikeArtifactWhitespace;
+
+                        // Some PDFs encode intra-word kerning as actual whitespace glyphs.
+                        // If this whitespace sits between two alphabetic characters, treat it as a kerning
+                        // artifact and avoid turning it into a real space.
                         const pending = current as unknown as { __pendingSpace?: boolean; __pendingSpaceXEnd?: number };
-                        if (!pending.__pendingSpace) {
-                          pending.__pendingSpace = true;
-                          pending.__pendingSpaceXEnd = xEnd;
+                        if (!isIntraWordWhitespace) {
+                          // This is a *real* word space. Add it immediately so we don't collapse words
+                          // like "by and between you" into "byandbetweenyou".
+                          if (current.text.length > 0 && !current.text.endsWith(' ')) {
+                            current.text += ' ';
+                          }
+                          pending.__pendingSpace = false;
+                          pending.__pendingSpaceXEnd = undefined;
+                        } else {
+                          // Artifact whitespace between letters should be ignored entirely.
+                          pending.__pendingSpace = false;
+                          pending.__pendingSpaceXEnd = undefined;
                         }
                         current.width = Math.max(current.width, (x + w) - current.x);
                         const mergedTop = Math.max(current.y + current.height, y + h);
@@ -583,16 +810,23 @@ export class PDFiumWrapper {
                       const rawAvgCharW = currentTextLen > 0 ? current.width / currentTextLen : fontSize * 0.55;
                       const avgCharW = Math.max(fontSize * 0.25, Math.min(fontSize * 1.2, rawAvgCharW));
                       const prevChar = (current.text || '').slice(-1);
-                      const isPrevAlphaNum = /[A-Za-z0-9]/.test(prevChar);
-                      const isNextAlphaNum = /[A-Za-z0-9]/.test(ch);
-                      const caseBoundary = /[a-z]$/.test(prevChar) && /[A-Z]/.test(ch);
+                      const isPrevAlphaNum = /[\p{L}\p{N}]/u.test(prevChar);
+                      const isNextAlphaNum = /[\p{L}\p{N}]/u.test(ch);
+                      const caseBoundary = /\p{Ll}$/u.test(prevChar) && /\p{Lu}/u.test(ch);
+                      const inWordAlpha = /\p{L}$/u.test(prevChar) && /\p{L}/u.test(ch) && !caseBoundary;
                       const caseBoundaryGap = Math.max(0.15, avgCharW * 0.08);
-                      const boundaryGap = Math.max(adjacentTol + 0.1, avgCharW * 0.35);
+                      // Splitting a run is very expensive semantically; only do it when we're confident the gap
+                      // indicates a real boundary (e.g., between words/numbers). In some PDFs, glyph boxes are
+                      // spaced such that intra-word kerning produces gaps larger than `adjacentTol`.
+                      const boundaryGap = Math.max(adjacentTol + 0.25, avgCharW * 0.75);
+                      const wordBoundaryGap = Math.max(boundaryGap * 1.6, avgCharW * 1.25, fontSize * 0.85);
                       const canSplit =
                         currentTextLen >= 2 &&
                         isPrevAlphaNum &&
                         isNextAlphaNum &&
-                        (caseBoundary ? gap > caseBoundaryGap : gap > boundaryGap);
+                        (caseBoundary
+                          ? gap > caseBoundaryGap
+                          : (inWordAlpha ? gap > wordBoundaryGap : gap > boundaryGap));
 
                       if (canSplit) {
                         if (pending.__pendingSpace) {
@@ -609,7 +843,7 @@ export class PDFiumWrapper {
                           fontSize,
                           fontFamily: effectiveFontFamily,
                           fontWeight,
-                          fontStyle: 'normal',
+                          fontStyle,
                           color: toCssColor(rr, gg, bb, aa),
                           rotation: rotation || undefined
                         };
@@ -623,10 +857,12 @@ export class PDFiumWrapper {
                         const baseXEnd = typeof pending.__pendingSpaceXEnd === 'number' ? pending.__pendingSpaceXEnd : xEnd;
                         const effectiveGap = x - baseXEnd;
                         const spaceGap = Math.max(0.6, avgCharW * 0.45);
-                        const prevAlpha = /[A-Za-z]/.test(prevChar);
-                        const nextAlpha = /[A-Za-z]/.test(ch);
+                        const prevAlpha = /\p{L}/u.test(prevChar);
+                        const nextAlpha = /\p{L}/u.test(ch);
                         const inWordAlpha = prevAlpha && nextAlpha && !caseBoundary;
-                        const minWordSpaceGap = Math.max(spaceGap * 1.6, avgCharW * 1.35);
+                        // If we're inside a word (letters on both sides), be extremely conservative.
+                        // Many PDFs have per-glyph spacing/kerning that looks like a small "gap".
+                        const minWordSpaceGap = Math.max(spaceGap * 3.0, avgCharW * 2.8, fontSize * 0.9);
                         if (
                           effectiveGap > spaceGap &&
                           (!inWordAlpha || effectiveGap > minWordSpaceGap) &&
@@ -652,8 +888,8 @@ export class PDFiumWrapper {
                       const pending = current as unknown as { __pendingSpace?: boolean; __pendingSpaceXEnd?: number };
                       const prevTrim = (current.text || '').trim();
                       const nextTrim = String(ch).trim();
-                      const prevIsSingleLetter = /^[A-Za-z]$/.test(prevTrim);
-                      const nextIsSingleLetter = /^[A-Za-z]$/.test(nextTrim);
+                      const prevIsSingleLetter = /^\p{L}$/u.test(prevTrim);
+                      const nextIsSingleLetter = /^\p{L}$/u.test(nextTrim);
                       const prevIsSingleDigit = /^[0-9]$/.test(prevTrim);
                       const nextIsSingleDigit = /^[0-9]$/.test(nextTrim);
 
@@ -666,7 +902,7 @@ export class PDFiumWrapper {
                       const avgCharW = Math.max(fontSize * 0.25, Math.min(fontSize * 1.2, rawAvgCharW));
                       const attachPunct =
                         /^[,:;./-]$/.test(nextTrim) &&
-                        /[0-9A-Za-z]$/.test(prevTrim) &&
+                        /[\p{L}\p{N})\]}"'”’]$/u.test(prevTrim) &&
                         effectiveGap <= Math.max(wordGap, avgCharW * 0.9);
 
                       if (attachPunct) {
@@ -685,11 +921,31 @@ export class PDFiumWrapper {
                         (prevIsSingleLetter && nextIsSingleLetter) || (prevIsSingleDigit && nextIsSingleDigit);
 
                       const prevChar = prevTrim.slice(-1);
-                      const caseBoundary = /[a-z]$/.test(prevChar) && /^[A-Z]/.test(nextTrim);
-                      const inWordAlpha = /[A-Za-z]$/.test(prevTrim) && /^[A-Za-z]/.test(nextTrim) && !caseBoundary;
+                      const caseBoundary = /\p{Ll}$/u.test(prevChar) && /^\p{Lu}/u.test(nextTrim);
+                      const inWordAlpha = /\p{L}$/u.test(prevTrim) && /^\p{L}/u.test(nextTrim) && !caseBoundary;
+
+                      // PDFium often reports per-glyph boxes with larger-than-expected gaps for certain fonts.
+                      // If both sides are alphabetic and there's no case boundary, treat this as an intra-word
+                      // gap and *do not* insert a space or split into a new run.
+                      if (inWordAlpha) {
+                        pending.__pendingSpace = false;
+                        pending.__pendingSpaceXEnd = undefined;
+                        current.text += ch;
+                        current.width = Math.max(current.width, (x + w) - current.x);
+                        const mergedTop = Math.max(current.y + current.height, y + h);
+                        const mergedBottom = Math.min(current.y, y);
+                        current.y = mergedBottom;
+                        current.height = Math.max(0, mergedTop - mergedBottom);
+                        continue;
+                      }
                       const insertSpace =
                         !likelyNoSpace &&
-                        (mustSpace || (!inWordAlpha && effectiveGap > wordGap) || (caseBoundary && effectiveGap > 0));
+                        (
+                          mustSpace ||
+                          (!inWordAlpha && effectiveGap > wordGap) ||
+                          // Case boundaries should not force a space unless there's a meaningful gap.
+                          (caseBoundary && effectiveGap > Math.max(0.25, avgCharW * 0.12))
+                        );
 
                       pending.__pendingSpace = false;
                       pending.__pendingSpaceXEnd = undefined;
@@ -708,7 +964,7 @@ export class PDFiumWrapper {
                         fontSize,
                         fontFamily: effectiveFontFamily,
                         fontWeight,
-                        fontStyle: 'normal',
+                        fontStyle,
                         color: toCssColor(rr, gg, bb, aa),
                         rotation: rotation || undefined
                       };
@@ -729,7 +985,7 @@ export class PDFiumWrapper {
                     fontSize,
                     fontFamily: effectiveFontFamily,
                     fontWeight,
-                    fontStyle: 'normal',
+                    fontStyle,
                     color: toCssColor(rr, gg, bb, aa),
                     rotation: rotation || undefined
                   };

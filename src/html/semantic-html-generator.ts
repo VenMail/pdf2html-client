@@ -1,16 +1,10 @@
 import type { PDFPage, PDFTextContent } from '../types/pdf.js';
-import type { FontMapping } from '../types/fonts.js';
 import type { RegionLayoutAnalyzer } from '../core/region-layout.js';
-import { getDefaultFontMetricsResolver } from '../fonts/font-metrics-resolver.js';
-import { normalizeFontName } from '../fonts/font-name-normalizer.js';
+import type { PageTextRegionLayout, TextLine } from '../core/layout/types.js';
 
 type TextRun = {
   text: string;
-  fontFamily: string;
-  fontSize: number;
-  fontWeight: number;
-  fontStyle: string;
-  color: string;
+  sample: PDFTextContent;
 };
 
 type Line = {
@@ -19,6 +13,8 @@ type Line = {
   height: number;
   minX: number;
   maxX: number;
+  sourceLine?: TextLine;
+  joinWithPrev?: 'hyphenation' | 'continuation';
 };
 
 type Block = {
@@ -37,6 +33,17 @@ type SemanticStructure = {
   medianLineHeight: number;
 };
 
+type SemanticLayoutTuning = {
+  blockGapFactor?: number;
+  headingThreshold?: number;
+  maxHeadingLength?: number;
+};
+
+export type SemanticHTMLRenderContext = {
+  getFontClass: (fontFamily: string) => string;
+  renderInlineSpan: (text: PDFTextContent, fontClass: string) => string;
+};
+
 const CONFIG = {
   lineToleranceFactor: 0.45,
   blockGapFactor: 1.8,
@@ -53,8 +60,6 @@ const CONFIG = {
 };
 
 export class SemanticHTMLGenerator {
-  private debugFontSeen: Set<string> = new Set();
-
   private debugEnabled(): boolean {
     const g = globalThis as unknown as { __PDF2HTML_DEBUG_SEMANTIC__?: boolean };
     if (g && g.__PDF2HTML_DEBUG_SEMANTIC__ === true) return true;
@@ -70,9 +75,14 @@ export class SemanticHTMLGenerator {
     console.log('[semantic]', ...args);
   }
 
-  generateSemanticHTML(page: PDFPage, fontMappings: FontMapping[], analyzer: RegionLayoutAnalyzer): string {
-    const structure = this.analyzePage(page, analyzer);
-    return this.renderHTML(structure, fontMappings);
+  generateSemanticHTML(
+    page: PDFPage,
+    analyzer: RegionLayoutAnalyzer,
+    tuning: SemanticLayoutTuning | undefined,
+    ctx: SemanticHTMLRenderContext
+  ): string {
+    const structure = this.analyzePage(page, analyzer, tuning);
+    return this.renderHTML(structure, ctx);
   }
 
   private getListMarkerInfo(text: string): { listType: 'ul' | 'ol' } | null {
@@ -87,30 +97,123 @@ export class SemanticHTMLGenerator {
     return null;
   }
 
-  private analyzePage(page: PDFPage, analyzer: RegionLayoutAnalyzer): SemanticStructure {
-    const items = (page.content.text || []).filter((t) => t.text && t.text.trim().length > 0);
+  private analyzePage(page: PDFPage, analyzer: RegionLayoutAnalyzer, tuning?: SemanticLayoutTuning): SemanticStructure {
+    const analysis = analyzer.analyze(page);
 
-    const fontSizes = items.map((t) => t.fontSize).sort((a, b) => a - b);
-    const heights = items.map((t) => Math.max(1, t.height)).sort((a, b) => a - b);
-    const medianFontSize = fontSizes[Math.floor(fontSizes.length / 2)] || 12;
-    const medianLineHeight = heights[Math.floor(heights.length / 2)] || 14;
+    const medianFontSize = analysis.medianFontSize || 12;
+    const medianLineHeight = analysis.medianHeight || 14;
 
-    const lines = this.groupIntoLines(page, items, analyzer);
-    const rawBlocks = this.groupIntoBlocks(lines, { medianFontSize, medianLineHeight });
-    const mergedBlocks = this.mergeAdjacentBlocks(rawBlocks, { medianFontSize, medianLineHeight });
+    const rawParagraphBlocks = this.extractBlocksFromAnalysis(analysis, analyzer);
+    const classified = rawParagraphBlocks.flatMap((b) => this.classifyBlockOrSplit(b, { medianFontSize, medianLineHeight }, tuning));
+    const mergedBlocks = this.mergeAdjacentBlocks(classified, { medianFontSize, medianLineHeight });
     const blocks = this.rewriteImportantNotes(mergedBlocks, { medianFontSize, medianLineHeight });
 
     this.debug('page', page.pageNumber, {
-      items: items.length,
+      items: (page.content.text || []).length,
       medianFontSize,
       medianLineHeight,
-      lines: lines.length,
-      rawBlocks: rawBlocks.length,
+      rawBlocks: rawParagraphBlocks.length,
       mergedBlocks: mergedBlocks.length,
       finalBlocks: blocks.length
     });
 
     return { blocks, medianFontSize, medianLineHeight };
+  }
+
+  private extractBlocksFromAnalysis(analysis: PageTextRegionLayout, analyzer: RegionLayoutAnalyzer): Block[] {
+    const out: Block[] = [];
+
+    for (const region of analysis.regions) {
+      if (region.flowAllowed && region.paragraphs.length > 0) {
+        for (const p of region.paragraphs) {
+          const lines: Line[] = [];
+          for (const entry of p.lines) {
+            const sourceLine = entry.sourceLine;
+            if (sourceLine) {
+              const runs = this.buildRunsFromTokens(
+                analyzer.reconstructLineTokens(sourceLine.items),
+                sourceLine.items[0]
+              );
+              lines.push({
+                runs,
+                y: sourceLine.rect.top,
+                height: sourceLine.rect.height,
+                minX: region.rect.left + entry.indent,
+                maxX: sourceLine.maxX,
+                sourceLine,
+                joinWithPrev: entry.joinWithPrev
+              });
+            } else {
+              const sample = p.dominant;
+              lines.push({
+                runs: [{ text: entry.text || '', sample }],
+                y: p.top,
+                height: p.lineHeight,
+                minX: region.rect.left + entry.indent,
+                maxX: region.rect.left + entry.indent,
+                joinWithPrev: entry.joinWithPrev
+              });
+            }
+          }
+
+          const nonEmptyLines = lines.filter((l) => this.extractLineText(l).trim().length > 0);
+          if (nonEmptyLines.length === 0) continue;
+
+          const indent = Math.min(...nonEmptyLines.map((l) => l.minX));
+          out.push({ lines: nonEmptyLines, type: 'paragraph', indent });
+        }
+
+        continue;
+      }
+
+      // Fallback: preserve reading order from RegionLayoutAnalyzer lines even when flow is not allowed.
+      const ordered = [...region.lines].sort((a, b) => {
+        const yDiff = a.rect.top - b.rect.top;
+        if (Math.abs(yDiff) > 0.5) return yDiff;
+        return a.minX - b.minX;
+      });
+
+      for (const l of ordered) {
+        const runs = this.buildRunsFromTokens(analyzer.reconstructLineTokens(l.items), l.items[0]);
+        const line: Line = {
+          runs,
+          y: l.rect.top,
+          height: l.rect.height,
+          minX: l.minX,
+          maxX: l.maxX,
+          sourceLine: l
+        };
+        if (this.extractLineText(line).trim().length === 0) continue;
+        out.push({ lines: [line], type: 'paragraph', indent: line.minX });
+      }
+    }
+
+    return out;
+  }
+
+  private buildRunsFromTokens(
+    tokens: Array<{ type: 'text'; text: string; sample: PDFTextContent } | { type: 'space' }>,
+    fallbackSample: PDFTextContent | undefined
+  ): TextRun[] {
+    const out: TextRun[] = [];
+    let lastSample: PDFTextContent | undefined = fallbackSample;
+
+    for (const tok of tokens) {
+      if (tok.type === 'space') {
+        if (out.length > 0) {
+          out[out.length - 1]!.text += ' ';
+        } else if (lastSample) {
+          out.push({ text: ' ', sample: lastSample });
+        }
+        continue;
+      }
+
+      lastSample = tok.sample;
+      out.push({ text: tok.text, sample: tok.sample });
+    }
+
+    // Collapse consecutive whitespace inside runs.
+    return out.filter((r) => r.text.length > 0);
   }
 
   private rewriteImportantNotes(blocks: Block[], stats: { medianFontSize: number; medianLineHeight: number }): Block[] {
@@ -249,7 +352,7 @@ export class SemanticHTMLGenerator {
       if (prev.type === 'paragraph' && b.type === 'paragraph') {
         const aRun = firstRun(prev);
         const bRun = firstRun(b);
-        const fsDelta = Math.abs((aRun?.fontSize ?? stats.medianFontSize) - (bRun?.fontSize ?? stats.medianFontSize));
+        const fsDelta = Math.abs((aRun?.sample.fontSize ?? stats.medianFontSize) - (bRun?.sample.fontSize ?? stats.medianFontSize));
         const fontOk = fsDelta <= Math.max(1.5, stats.medianFontSize * 0.18);
         if (gap <= maxGap && indentDelta <= maxIndentDelta && fontOk) {
           prev.lines.push(...b.lines);
@@ -263,97 +366,25 @@ export class SemanticHTMLGenerator {
     return out;
   }
 
-  private groupIntoLines(
-    page: PDFPage,
-    items: PDFTextContent[],
-    analyzer: RegionLayoutAnalyzer
-  ): Line[] {
-    // Reuse the authoritative line grouping from RegionLayoutAnalyzer so punctuation-only glyphs
-    // (e.g. '.', ':') that often have slightly different y/height still get assigned to the right line.
-    // We only need the line geometry + per-line token reconstruction.
-    const analysis = analyzer.analyze({
-      ...page,
-      content: {
-        ...page.content,
-        text: items
-      }
-    });
-
-    return analysis.lines
-      .map((l) => {
-        const tokens = analyzer.reconstructLineTokens(l.items);
-        const runs: TextRun[] = [];
-        for (const tok of tokens) {
-          if (tok.type !== 'text') continue;
-          const sample = tok.sample;
-          runs.push({
-            text: tok.text,
-            fontFamily: sample.fontFamily,
-            fontSize: sample.fontSize,
-            fontWeight: sample.fontWeight || 400,
-            fontStyle: sample.fontStyle || 'normal',
-            color: sample.color
-          });
-        }
-
-        return {
-          runs,
-          y: l.rect.top,
-          height: l.rect.height,
-          minX: l.minX,
-          maxX: l.maxX
-        };
-      })
-      .filter((l) => l.runs.length > 0)
-      .sort((a, b) => a.y - b.y);
-  }
-
-  private groupIntoBlocks(lines: Line[], stats: { medianFontSize: number; medianLineHeight: number }): Block[] {
-    if (lines.length === 0) return [];
-
-    const blocks: Block[] = [];
-    const blockGapThreshold = stats.medianLineHeight * CONFIG.blockGapFactor;
-
-    let current: Block | null = null;
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const prev = i > 0 ? lines[i - 1] : undefined;
-      const verticalGap = prev ? line.y - (prev.y + prev.height) : 0;
-
-      if (!current) {
-        current = { lines: [line], type: 'paragraph', indent: line.minX };
-        continue;
-      }
-
-      if (verticalGap > blockGapThreshold) {
-        blocks.push(...this.classifyBlockOrSplit(current, stats));
-        current = { lines: [line], type: 'paragraph', indent: line.minX };
-        continue;
-      }
-
-      current.lines.push(line);
-    }
-
-    if (current) blocks.push(...this.classifyBlockOrSplit(current, stats));
-    return blocks;
-  }
-
-  private classifyBlockOrSplit(block: Block, stats: { medianFontSize: number; medianLineHeight: number }): Block[] {
+  private classifyBlockOrSplit(
+    block: Block,
+    stats: { medianFontSize: number; medianLineHeight: number },
+    tuning?: SemanticLayoutTuning
+  ): Block[] {
     const lines = block.lines.filter((l) => this.extractLineText(l).trim().length > 0);
     if (lines.length === 0) return [{ ...block, type: 'paragraph' }];
 
     if (lines.length >= 2) {
       const firstText = this.extractLineText(lines[0]!).trim();
       const headingCandidate: Block = { lines: [lines[0]!], type: 'paragraph', indent: lines[0]!.minX };
-      if (this.isHeading(headingCandidate, stats, firstText)) {
+      if (this.isHeading(headingCandidate, stats, firstText, tuning)) {
         const rest: Block = {
           lines: lines.slice(1),
           type: 'paragraph',
           indent: Math.min(...lines.slice(1).map((l) => l.minX))
         };
 
-        return [this.classifyBlock(headingCandidate, stats), this.classifyBlock(rest, stats)];
+        return [this.classifyBlock(headingCandidate, stats, tuning), this.classifyBlock(rest, stats, tuning)];
       }
     }
 
@@ -369,16 +400,16 @@ export class SemanticHTMLGenerator {
         indent: Math.min(...lines.slice(1).map((l) => l.minX))
       };
 
-      return [this.classifyBlock(prelude, stats), this.classifyBlock(listPart, stats)];
+      return [this.classifyBlock(prelude, stats, tuning), this.classifyBlock(listPart, stats, tuning)];
     }
 
-    return [this.classifyBlock(block, stats)];
+    return [this.classifyBlock(block, stats, tuning)];
   }
 
-  private classifyBlock(block: Block, stats: { medianFontSize: number; medianLineHeight: number }): Block {
+  private classifyBlock(block: Block, stats: { medianFontSize: number; medianLineHeight: number }, tuning?: SemanticLayoutTuning): Block {
     const text = this.extractBlockText(block);
 
-    if (this.isHeading(block, stats, text)) {
+    if (this.isHeading(block, stats, text, tuning)) {
       const out = { ...block, type: 'heading' as const, level: this.determineHeadingLevel(block, stats) };
       this.debug('classify', { type: 'heading', text: text.trim().slice(0, 80) });
       return out;
@@ -396,19 +427,26 @@ export class SemanticHTMLGenerator {
     return { ...block, type: 'paragraph' };
   }
 
-  private isHeading(block: Block, stats: { medianFontSize: number }, text: string): boolean {
+  private isHeading(
+    block: Block,
+    stats: { medianFontSize: number },
+    text: string,
+    tuning?: SemanticLayoutTuning
+  ): boolean {
     if (block.lines.length !== 1) return false;
     const trimmed = text.trim();
     if (trimmed.length === 0) return false;
-    if (trimmed.length > CONFIG.maxHeadingLength) return false;
+    const maxHeadingLength = typeof tuning?.maxHeadingLength === 'number' ? tuning.maxHeadingLength : CONFIG.maxHeadingLength;
+    if (trimmed.length > maxHeadingLength) return false;
 
     const firstRun = block.lines[0].runs[0];
     if (!firstRun) return false;
 
-    const ratio = firstRun.fontSize / stats.medianFontSize;
-    if (ratio < CONFIG.headingThreshold) return false;
+    const ratio = firstRun.sample.fontSize / stats.medianFontSize;
+    const headingThreshold = typeof tuning?.headingThreshold === 'number' ? tuning.headingThreshold : CONFIG.headingThreshold;
+    if (ratio < headingThreshold) return false;
 
-    const isBold = firstRun.fontWeight > 450;
+    const isBold = (firstRun.sample.fontWeight || 400) > 450;
     const isAllCaps = trimmed === trimmed.toUpperCase() && /[A-Z]/.test(trimmed);
 
     return isBold || isAllCaps;
@@ -416,7 +454,7 @@ export class SemanticHTMLGenerator {
 
   private determineHeadingLevel(block: Block, stats: { medianFontSize: number }): number {
     const firstRun = block.lines[0].runs[0];
-    const ratio = firstRun ? firstRun.fontSize / stats.medianFontSize : 1;
+    const ratio = firstRun ? firstRun.sample.fontSize / stats.medianFontSize : 1;
 
     if (ratio >= 2.0) return 1;
     if (ratio >= 1.8) return 2;
@@ -440,31 +478,42 @@ export class SemanticHTMLGenerator {
     return false;
   }
 
-  private renderHTML(structure: SemanticStructure, fontMappings: FontMapping[]): string {
-    return structure.blocks.map((b) => this.renderBlock(b, fontMappings)).join('\n\n');
+  private renderHTML(structure: SemanticStructure, ctx: SemanticHTMLRenderContext): string {
+    return structure.blocks.map((b) => this.renderBlock(b, ctx)).join('\n\n');
   }
 
-  private renderBlock(block: Block, fontMappings: FontMapping[]): string {
-    if (block.type === 'heading') return this.renderHeading(block, fontMappings);
-    if (block.type === 'list') return this.renderList(block, fontMappings);
-    return this.renderParagraph(block, fontMappings);
+  private renderBlock(block: Block, ctx: SemanticHTMLRenderContext): string {
+    if (block.type === 'heading') return this.renderHeading(block, ctx);
+    if (block.type === 'list') return this.renderList(block, ctx);
+    return this.renderParagraph(block, ctx);
   }
 
-  private renderHeading(block: Block, fontMappings: FontMapping[]): string {
+  private renderHeading(block: Block, ctx: SemanticHTMLRenderContext): string {
     const level = block.level ?? 3;
     const line = block.lines[0];
-    const content = this.renderLineContent(line, fontMappings);
-    const style = this.generateInlineStyle(line.runs[0], fontMappings);
-    return `<h${level} style="${style}">${content}</h${level}>`;
+    const content = this.renderLineContent(line, ctx);
+    return `<h${level}>${content}</h${level}>`;
   }
 
-  private renderParagraph(block: Block, fontMappings: FontMapping[]): string {
-    const content = block.lines.map((l) => this.renderLineContent(l, fontMappings)).join(' ');
-    const style = this.generateInlineStyle(block.lines[0].runs[0], fontMappings);
-    return `<p style="${style}">${content}</p>`;
+  private renderParagraph(block: Block, ctx: SemanticHTMLRenderContext): string {
+    const parts: string[] = [];
+
+    for (let i = 0; i < block.lines.length; i++) {
+      const line = block.lines[i]!;
+      const next = block.lines[i + 1];
+
+      if (i > 0 && !line.joinWithPrev) {
+        parts.push(' ');
+      }
+
+      const renderLine = next?.joinWithPrev === 'hyphenation' ? this.stripTrailingSoftHyphenFromLine(line) : line;
+      parts.push(this.renderLineContent(renderLine, ctx));
+    }
+
+    return `<p>${parts.join('')}</p>`;
   }
 
-  private renderList(block: Block, fontMappings: FontMapping[]): string {
+  private renderList(block: Block, ctx: SemanticHTMLRenderContext): string {
     const listTag = block.listType ?? 'ul';
     const items: string[] = [];
     const baseIndent = Math.min(...block.lines.map((l) => l.minX));
@@ -475,34 +524,35 @@ export class SemanticHTMLGenerator {
     const pushCurrent = (): void => {
       if (current.length === 0) return;
 
-      const firstRun = this.findFirstNonEmptyRun(current[0]);
-      const liStyle = this.generateInlineStyle(firstRun ?? current[0].runs[0], fontMappings);
-
       const html = current
-        .map((l) => this.renderLineContent(l, fontMappings))
-        .join(' ')
+        .map((l, idx) => {
+          if (idx === 0) return this.renderLineContent(l, ctx);
+          if (l.joinWithPrev) return this.renderLineContent(l, ctx);
+          return ' ' + this.renderLineContent(l, ctx);
+        })
+        .join('')
         .trim();
 
-      if (html.length > 0) items.push(`  <li style="${liStyle}">${html}</li>`);
+      if (html.length > 0) items.push(`  <li>${html}</li>`);
       current = [];
     };
 
     if (Array.isArray(block.listItemTexts) && block.listItemTexts.length > 0) {
-      const firstRun = block.lines[0]?.runs[0];
-      const liStyle = this.generateInlineStyle(firstRun, fontMappings);
       for (const t of block.listItemTexts) {
         const safe = this.escapeHtml(String(t || ''));
-        if (safe.trim().length > 0) items.push(`  <li style="${liStyle}">${safe}</li>`);
+        if (safe.trim().length > 0) items.push(`  <li>${safe}</li>`);
       }
     } else if (Array.isArray(block.listItems) && block.listItems.length > 0) {
       for (const group of block.listItems) {
-        const firstRun = this.findFirstNonEmptyRun(group[0]);
-        const liStyle = this.generateInlineStyle(firstRun ?? group[0]?.runs[0], fontMappings);
         const html = group
-          .map((l) => this.renderLineContent(l, fontMappings))
-          .join(' ')
+          .map((l, idx) => {
+            if (idx === 0) return this.renderLineContent(l, ctx);
+            if (l.joinWithPrev) return this.renderLineContent(l, ctx);
+            return ' ' + this.renderLineContent(l, ctx);
+          })
+          .join('')
           .trim();
-        if (html.length > 0) items.push(`  <li style="${liStyle}">${html}</li>`);
+        if (html.length > 0) items.push(`  <li>${html}</li>`);
       }
     } else {
       for (const line of block.lines) {
@@ -520,7 +570,7 @@ export class SemanticHTMLGenerator {
         if (!started) continue;
 
         if (current.length > 0) {
-          const fs = line.runs[0]?.fontSize ?? 12;
+          const fs = line.runs[0]?.sample.fontSize ?? 12;
           const indentThreshold = Math.max(6, fs * 0.6);
           const isContinuation = line.minX - baseIndent >= indentThreshold;
           if (isContinuation) {
@@ -536,79 +586,34 @@ export class SemanticHTMLGenerator {
       pushCurrent();
     }
 
-    const firstRun = block.lines[0].runs[0];
-    const listStyle = firstRun
-      ? `font-family: ${this.getCssFontStack(firstRun.fontFamily, fontMappings)}; font-size: ${firstRun.fontSize}px`
-      : '';
-
-    return `<${listTag} style="${listStyle}">\n${items.join('\n')}\n</${listTag}>`;
+    return `<${listTag}>\n${items.join('\n')}\n</${listTag}>`;
   }
 
-  private renderLineContent(line: Line, fontMappings: FontMapping[]): string {
-    if (line.runs.length === 1) {
-      return this.escapeHtml(line.runs[0].text);
-    }
-
+  private renderLineContent(line: Line, ctx: SemanticHTMLRenderContext): string {
     return line.runs
       .map((r) => {
-        const style = this.generateInlineStyle(r, fontMappings);
-        return `<span style="${style}">${this.escapeHtml(r.text)}</span>`;
+        const fontClass = ctx.getFontClass(r.sample.fontFamily);
+        return ctx.renderInlineSpan({ ...r.sample, text: r.text }, fontClass);
       })
       .join('');
   }
 
-  private generateInlineStyle(run: TextRun | undefined, fontMappings: FontMapping[]): string {
-    if (!run) return '';
-
-    const parts: string[] = [];
-    parts.push(`font-family: ${this.getCssFontStack(run.fontFamily, fontMappings)}`);
-    parts.push(`font-size: ${run.fontSize}px`);
-
-    if (run.fontWeight && run.fontWeight !== 400) parts.push(`font-weight: ${run.fontWeight}`);
-    if (run.fontStyle && run.fontStyle !== 'normal') parts.push(`font-style: ${run.fontStyle}`);
-    if (run.color && run.color !== 'rgba(0, 0, 0, 1)') parts.push(`color: ${run.color}`);
-
-    return parts.join('; ');
-  }
-
-  private getCssFontStack(rawFamily: string, fontMappings: FontMapping[]): string {
-    const key = normalizeFontName(rawFamily || '').family;
-    const mapping = fontMappings.find((m) => {
-      const famKey = normalizeFontName(m.detectedFont.family || '').family;
-      const nameKey = normalizeFontName(m.detectedFont.name || '').family;
-      return (key && famKey === key) || (key && nameKey === key) || m.detectedFont.family === rawFamily;
-    });
-    if (mapping) {
-      const family = mapping.googleFont.family;
-      const quoted = family.includes(' ') ? `'${family}'` : family;
-      const seenKey = `map:${rawFamily}=>${family}`;
-      if (this.debugEnabled() && !this.debugFontSeen.has(seenKey)) {
-        this.debugFontSeen.add(seenKey);
-        this.debug('fontStack', { rawFamily, normalized: key, mappedTo: family, fallbackChain: mapping.fallbackChain });
+  private stripTrailingSoftHyphenFromLine(line: Line): Line {
+    if (!line.runs || line.runs.length === 0) return line;
+    const runs = [...line.runs];
+    for (let i = runs.length - 1; i >= 0; i--) {
+      const r = runs[i]!;
+      if (!r.text) break;
+      if (!r.text.endsWith('\u00AD')) break;
+      const nextText = r.text.slice(0, -1);
+      if (nextText.length === 0) {
+        runs.splice(i, 1);
+      } else {
+        runs[i] = { ...r, text: nextText };
       }
-      return `${quoted}, ${mapping.fallbackChain.join(', ')}`;
+      break;
     }
-
-    const resolver = getDefaultFontMetricsResolver();
-    const match = resolver.resolveByName(rawFamily || '');
-    const family = match.record.family;
-    const quoted = family.includes(' ') ? `'${family}'` : family;
-
-    const seenKey = `fallback:${rawFamily}=>${family}`;
-    if (this.debugEnabled() && !this.debugFontSeen.has(seenKey)) {
-      this.debugFontSeen.add(seenKey);
-      this.debug('fontStack', { rawFamily, normalized: key, resolved: family, reason: match.reason, score: match.score });
-    }
-
-    if (match.record.category === 'serif') {
-      return `${quoted}, 'Times New Roman', Times, serif`;
-    }
-
-    if (match.record.category === 'monospace') {
-      return `${quoted}, 'Courier New', Courier, monospace`;
-    }
-
-    return `${quoted}, Arial, Helvetica, sans-serif`;
+    return { ...line, runs };
   }
 
   private stripListMarkerFromLine(line: Line): Line {
@@ -631,10 +636,7 @@ export class SemanticHTMLGenerator {
     return { ...line, runs };
   }
 
-  private findFirstNonEmptyRun(line: Line | undefined): TextRun | undefined {
-    if (!line) return undefined;
-    return line.runs.find((r) => r.text.trim().length > 0);
-  }
+ 
 
   private extractBlockText(block: Block): string {
     return block.lines.map((l) => this.extractLineText(l)).join('\n');

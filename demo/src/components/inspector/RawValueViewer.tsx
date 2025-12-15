@@ -35,7 +35,7 @@ const toUint8Array = (value: unknown): Uint8Array | null => {
   return null;
 };
 
-const bytesToHex = (bytes: Uint8Array, limit: number): { text: string; truncated: boolean } => {
+const bytesToHex = (bytes: Uint8Array, limit: number): { content: string; truncated: boolean } => {
   const slice = bytes.length > limit ? bytes.subarray(0, limit) : bytes;
   const truncated = bytes.length > limit;
   const parts: string[] = [];
@@ -47,10 +47,10 @@ const bytesToHex = (bytes: Uint8Array, limit: number): { text: string; truncated
   for (let i = 0; i < parts.length; i += 16) {
     grouped.push(parts.slice(i, i + 16).join(' '));
   }
-  return { text: grouped.join('\n'), truncated };
+  return { content: grouped.join('\n'), truncated };
 };
 
-const bytesToBase64 = (bytes: Uint8Array, limit: number): { text: string; truncated: boolean } => {
+const bytesToBase64 = (bytes: Uint8Array, limit: number): { content: string; truncated: boolean } => {
   const slice = bytes.length > limit ? bytes.subarray(0, limit) : bytes;
   const truncated = bytes.length > limit;
   let binary = '';
@@ -60,7 +60,7 @@ const bytesToBase64 = (bytes: Uint8Array, limit: number): { text: string; trunca
     binary += String.fromCharCode(...chunk);
   }
   const base64 = btoa(binary);
-  return { text: base64, truncated };
+  return { content: base64, truncated };
 };
 
 const safeStringify = (value: unknown): string => {
@@ -75,7 +75,7 @@ const safeStringify = (value: unknown): string => {
         return {
           __type: v?.constructor?.name || 'Uint8Array',
           byteLength: bytes.byteLength,
-          base64Preview: bytesToBase64(bytes, 2048).text
+          base64Preview: bytesToBase64(bytes, 2048).content
         };
       }
       if (v && typeof v === 'object') {

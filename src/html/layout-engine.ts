@@ -136,7 +136,11 @@ export class LayoutEngine {
     }
   ): string {
     const coords = options?.coordsOverride ?? this.transformCoordinates(text.x, text.y, pageHeight, text.height);
-    const lineHeightPx = Math.max(1, Math.round(Math.max(text.height, text.fontSize * 1.15)));
+    const absElementLineHeightFactor =
+      typeof this.options.layoutTuning?.absElementLineHeightFactor === 'number'
+        ? this.options.layoutTuning.absElementLineHeightFactor
+        : 1.15;
+    const lineHeightPx = Math.max(1, Math.round(Math.max(text.height, text.fontSize * absElementLineHeightFactor)));
 
     // Build style attributes
     const positionalStyleParts: string[] = [];
@@ -182,8 +186,11 @@ export class LayoutEngine {
 
     const style = positionalStyleParts.join('; ');
 
-    // Determine HTML tag based on semantic analysis
-    const tag = text.semanticTag || 'span';
+    const tag = this.options.preserveLayout
+      ? text.semanticTag === 'strong' || text.semanticTag === 'em'
+        ? text.semanticTag
+        : 'span'
+      : text.semanticTag || 'span';
     
     // Build HTML attributes
     const attrs: string[] = [];

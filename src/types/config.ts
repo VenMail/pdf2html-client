@@ -14,6 +14,7 @@ export interface PDF2HTMLConfig {
   fontMappingOptions?: FontMappingOptions;
 
   // Parser options
+  parserStrategy?: 'auto' | 'pdfium' | 'unpdf';
   parserOptions?: PDFParserOptions;
 
   // Output options

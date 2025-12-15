@@ -1,4 +1,5 @@
 import type { PDFTextContent, PDFFontInfo } from '../types/pdf.js';
+import { deriveFontWeightAndStyle } from '../fonts/font-style.js';
 
 export interface PDFiumTextExtractionResult {
   text: PDFTextContent[];
@@ -97,17 +98,20 @@ export class PDFiumTextExtractor {
     // Convert to top-left origin
     const y = pageHeight - item.y - item.height;
 
+    const fontName = item.fontName || '';
+    const derived = deriveFontWeightAndStyle({ fontName, fontFamily: fontName, fontFlags: 0 });
+
     return {
       text: item.text,
       x: item.x,
       y,
       width: item.width,
       height: item.height,
-      fontSize: item.fontSize || 12,
-      fontFamily: item.fontName || 'Arial',
-      fontWeight: 400, // Could be extracted from font name
-      fontStyle: 'normal', // Could be extracted from font name
-      color: '#000000', // Default
+      fontSize: item.fontSize,
+      fontFamily: fontName || 'Arial',
+      fontWeight: derived.fontWeight,
+      fontStyle: derived.fontStyle,
+      color: '#000000',
       fontInfo: item.fontName ? this.extractFontInfo(item) as PDFFontInfo | undefined : undefined
     };
   }

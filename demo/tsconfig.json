@@ -4,7 +4,7 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "jsx": "react-jsx",
-    "types": ["vite/client"],
+    "types": ["vite/client", "node"],
     "rootDir": "..",
     "outDir": "./dist"
   },

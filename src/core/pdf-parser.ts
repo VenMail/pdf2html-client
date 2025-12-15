@@ -9,6 +9,46 @@ export class PDFParser {
   private unpdfWrapper: UnPDFWrapper | null = null;
   private strategy: ParserStrategy;
 
+  private scoreTextQuality(document: PDFDocument): number {
+    const pages = document.pages || [];
+    const textItems = pages.flatMap((p) => p.content?.text || []);
+    const texts = textItems.map((t) => String(t.text || ''));
+    const joined = texts.join(' ').replace(/\s+/g, ' ').trim();
+    if (joined.length < 80) return 1;
+
+    const alphaItems = textItems
+      .map((t) => String(t.text || '').trim())
+      .filter((t) => t.length > 0)
+      .filter((t) => /[A-Za-z]/.test(t));
+    const alphaItemCount = Math.max(1, alphaItems.length);
+    const alphaShortItems = alphaItems.filter((t) => /^[A-Za-z]{1,2}$/.test(t)).length;
+    const alphaShortItemRatio = alphaShortItems / alphaItemCount;
+
+    const totalChars = Math.max(1, joined.replace(/\s+/g, '').length);
+    const itemsPerChar = Math.min(1, textItems.length / totalChars);
+
+    const tokens = joined.split(/\s+/g).filter((t) => t.length > 0);
+    const alphaTokens = tokens.filter((t) => /^[A-Za-z]+$/.test(t));
+    const alphaShort = alphaTokens.filter((t) => t.length <= 2).length;
+    const alphaLong = alphaTokens.filter((t) => t.length >= 3).length;
+    const alphaTotal = Math.max(1, alphaTokens.length);
+    const shortRatio = alphaShort / alphaTotal;
+    const longRatio = alphaLong / alphaTotal;
+
+    const singleLetterRuns = (joined.match(/(?:\b[A-Za-z]\b\s+){4,}\b[A-Za-z]\b/g) || []).length;
+    const mixedFragmentRuns = (joined.match(/\b[A-Za-z]{1,2}(?:\s+[A-Za-z]{1,2}){4,}\b/g) || []).length;
+
+    const penalty = Math.min(
+      1,
+      singleLetterRuns * 0.25 +
+        mixedFragmentRuns * 0.15 +
+        alphaShortItemRatio * 0.9 +
+        itemsPerChar * 0.75
+    );
+    const score = longRatio - shortRatio * 0.6 - penalty;
+    return Math.max(0, Math.min(1, score));
+  }
+
   constructor(strategy: ParserStrategy = 'auto') {
     this.strategy = strategy;
     this.pdfiumWrapper = new PDFiumWrapper();
@@ -44,7 +84,37 @@ export class PDFParser {
     }
 
     try {
-      return await this.pdfiumWrapper.parseDocument(data, options);
+      const pdfiumDoc = await this.pdfiumWrapper.parseDocument(data, options);
+      if (options.extractText) {
+        const quality = this.scoreTextQuality(pdfiumDoc);
+        if (quality < 0.32) {
+          try {
+            if (!this.unpdfWrapper) this.unpdfWrapper = new UnPDFWrapper();
+            const unpdfDoc = await this.unpdfWrapper.parseDocument(data, options);
+            const unpdfQuality = this.scoreTextQuality(unpdfDoc);
+            if (unpdfQuality > quality + 0.08) {
+              console.warn(
+                `PDFParser auto: PDFium text quality low (${quality.toFixed(2)}). Using UnPDF result (${unpdfQuality.toFixed(2)}).`
+              );
+
+              for (let i = 0; i < pdfiumDoc.pages.length && i < unpdfDoc.pages.length; i++) {
+                const p = pdfiumDoc.pages[i];
+                const u = unpdfDoc.pages[i];
+                if (!p || !u) continue;
+                if (!p.content || !u.content) continue;
+                if (Array.isArray(u.content.text) && u.content.text.length > 0) {
+                  p.content.text = u.content.text;
+                }
+              }
+
+              return pdfiumDoc;
+            }
+          } catch (error) {
+            console.warn('PDFParser auto: UnPDF fallback failed after low-quality PDFium text:', error);
+          }
+        }
+      }
+      return pdfiumDoc;
     } catch (error) {
       console.warn('PDFium parse failed; falling back to UnPDF:', error);
       if (!this.unpdfWrapper) this.unpdfWrapper = new UnPDFWrapper();

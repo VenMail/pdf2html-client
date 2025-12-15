@@ -9,6 +9,30 @@ const __dirname = dirname(__filename);
 
 const pdfsDir = join(__dirname, '../../demo/pdfs');
 
+interface PdfAnalysisResult {
+  success: boolean;
+  fileName?: string;
+  fileSize?: number;
+  pageCount?: number;
+  pages?: Array<{
+    pageNumber: number;
+    width: number;
+    height: number;
+    textItems: number;
+    images: number;
+    graphics: number;
+    forms: number;
+    annotations: number;
+  }>;
+  metadata?: unknown;
+  uniqueFonts?: string[];
+  totalTextItems?: number;
+  totalImages?: number;
+  totalGraphics?: number;
+  processingTime?: number;
+  error?: string;
+}
+
 test.describe('PDF Analysis', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/test-harness.html');
@@ -34,7 +58,7 @@ test.describe('PDF Analysis', () => {
       const pdfBase64 = pdfBuffer.toString('base64');
       const pdfDataUrl = `data:application/pdf;base64,${pdfBase64}`;
 
-      const analysis = await page.evaluate(async (pdfData, fileName) => {
+      const analysis = await page.evaluate<PdfAnalysisResult, { pdfData: string; fileName: string }>(async ({ pdfData, fileName }) => {
         try {
           // Use PDF2HTML to parse the document
           const PDF2HTML = (window as any).PDF2HTML;
@@ -57,7 +81,7 @@ test.describe('PDF Analysis', () => {
           
           // Try to extract font info from HTML
           const fontMatches = output.html.match(/font-family:\s*['"]([^'"]+)['"]/g) || [];
-          fontMatches.forEach(match => {
+          fontMatches.forEach((match: string) => {
             const font = match.match(/['"]([^'"]+)['"]/)?.[1];
             if (font) uniqueFonts.add(font);
           });
@@ -86,63 +110,14 @@ test.describe('PDF Analysis', () => {
             totalGraphics: 0,
             processingTime: Math.round(processingTime),
           };
-        } catch (error: any) {
+        } catch (error) {
+          const e = error as { message?: unknown };
           return {
             success: false,
-            error: error.message || String(error),
+            error: (typeof e?.message === 'string' && e.message.length > 0) ? e.message : String(error),
           };
         }
-      }, pdfDataUrl, pdfInfo.name);
-        
-        const document = await parser.parse(pdfData, {
-          extractText: true,
-          extractImages: true,
-          extractGraphics: true,
-          extractForms: true,
-          extractAnnotations: true,
-        });
-
-        const pages = document.pages.map(page => ({
-          pageNumber: page.pageNumber,
-          width: page.width,
-          height: page.height,
-          textItems: page.content.text.length,
-          images: page.content.images.length,
-          graphics: page.content.graphics.length,
-          forms: page.content.forms.length,
-          annotations: page.content.annotations.length,
-        }));
-
-        const uniqueFonts = new Set<string>();
-        document.pages.forEach(page => {
-          page.content.text.forEach(text => {
-            if (text.fontFamily) {
-              uniqueFonts.add(text.fontFamily);
-            }
-          });
-        });
-
-        parser.dispose();
-
-        return {
-          success: true,
-          fileName: 'test.pdf',
-          fileSize: 0,
-          pageCount: document.pageCount,
-          pages,
-          metadata: document.metadata,
-          uniqueFonts: Array.from(uniqueFonts),
-          totalTextItems: pages.reduce((sum, p) => sum + p.textItems, 0),
-          totalImages: pages.reduce((sum, p) => sum + p.images, 0),
-          totalGraphics: pages.reduce((sum, p) => sum + p.graphics, 0),
-        };
-      } catch (error: any) {
-        return {
-          success: false,
-          error: error.message || String(error),
-        };
-      }
-    }, pdfDataUrl);
+      }, { pdfData: pdfDataUrl, fileName: pdfInfo.name });
 
       expect(analysis.success, `Analysis should succeed for ${pdfInfo.name}`).toBe(true);
       expect(analysis.pageCount, `Page count should match for ${pdfInfo.name}`).toBe(pdfInfo.expectedPages);
@@ -151,9 +126,9 @@ test.describe('PDF Analysis', () => {
       console.log(`  Pages: ${analysis.pageCount}`);
       console.log(`  Text items: ${analysis.totalTextItems}`);
       console.log(`  Images: ${analysis.totalImages}`);
-      console.log(`  Unique fonts: ${analysis.uniqueFonts.length}`);
-      if (analysis.uniqueFonts.length > 0) {
-        console.log(`  Fonts: ${analysis.uniqueFonts.join(', ')}`);
+      console.log(`  Unique fonts: ${analysis.uniqueFonts?.length ?? 0}`);
+      if ((analysis.uniqueFonts?.length ?? 0) > 0) {
+        console.log(`  Fonts: ${(analysis.uniqueFonts ?? []).join(', ')}`);
       }
       console.log(`  Processing time: ${analysis.processingTime}ms`);
     });

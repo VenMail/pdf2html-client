@@ -293,28 +293,22 @@ export class PDFJSWrapper {
       // Use standard build for both browser and Node.js
       // Node.js will use main thread if worker is disabled
       try {
-        // Use Function constructor to make import truly dynamic and avoid Vite static analysis
-        const importPdfjs = new Function('specifier', 'return import(specifier)');
-        const imported = await importPdfjs('pdfjs-dist');
-      
-      // Handle default export if present
-      this.pdfjsLib = imported.default || imported;
-      
-      // Set worker source
-      if (this.pdfjsLib.GlobalWorkerOptions) {
-        if (typeof window !== 'undefined') {
-          // Browser environment - use CDN or local worker
-          try {
-            const workerUrl = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).href;
-            this.pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
-          } catch (e) {
-            this.pdfjsLib.GlobalWorkerOptions.workerSrc = 
-              `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${this.pdfjsLib.version}/pdf.worker.min.js`;
-          }
+        const injected =
+          typeof window !== 'undefined'
+            ? (window as unknown as { __PDFJS__?: unknown }).__PDFJS__
+            : undefined;
+
+        if (injected) {
+          this.pdfjsLib = injected;
         } else {
-          // Node.js environment - disable worker
-          this.pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+          // Use Function constructor to make import truly dynamic and avoid Vite static analysis
+          const importPdfjs = new Function('specifier', 'return import(specifier)');
+          const imported = await importPdfjs('pdfjs-dist');
+          this.pdfjsLib = (imported as { default?: unknown }).default || imported;
         }
+      
+      if (this.pdfjsLib.GlobalWorkerOptions && typeof window === 'undefined') {
+        this.pdfjsLib.GlobalWorkerOptions.workerSrc = '';
       }
       
         this.workerInitialized = true;
@@ -343,10 +337,6 @@ export class PDFJSWrapper {
         if (typeof window === 'undefined') {
           // Node.js: disable workers entirely
           this.pdfjsLib.GlobalWorkerOptions.workerSrc = '';
-        } else if (!this.pdfjsLib.GlobalWorkerOptions.workerSrc) {
-          // Browser: set CDN if not already set
-          this.pdfjsLib.GlobalWorkerOptions.workerSrc = 
-            `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${this.pdfjsLib.version}/pdf.worker.min.js`;
         }
       }
       

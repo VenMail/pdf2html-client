@@ -135,7 +135,8 @@ test.describe('PDF to HTML Conversion', () => {
 
           converter.dispose();
           return result;
-        } catch (error: any) {
+        } catch (error) {
+          const e = error as { message?: unknown };
           return {
             success: false,
             pageCount: 0,
@@ -144,7 +145,7 @@ test.describe('PDF to HTML Conversion', () => {
             textExtracted: false,
             imagesExtracted: false,
             fontMappings: 0,
-            error: error.message || String(error),
+            error: (typeof e?.message === 'string' && e.message.length > 0) ? e.message : String(error),
             bufferLength: 0
           };
         }
@@ -260,8 +261,9 @@ test.describe('PDF to HTML Conversion', () => {
 
         converter.dispose();
         return { success: true, stages: progressStages, result: output, bufferLength: arrayBuffer.byteLength };
-      } catch (error: any) {
-        return { success: false, stages: [], error: error.message, bufferLength: 0 };
+      } catch (error) {
+        const e = error as { message?: unknown };
+        return { success: false, stages: [], error: (typeof e?.message === 'string' && e.message.length > 0) ? e.message : String(error), bufferLength: 0 };
       }
     }, pdfDataUrl);
 
@@ -324,8 +326,9 @@ test.describe('PDF to HTML Conversion', () => {
         await converter.convert(pdfData);
         converter.dispose();
         return { success: true, error: null };
-      } catch (error: any) {
-        return { success: false, error: error.message || String(error) };
+      } catch (error) {
+        const e = error as { message?: unknown };
+        return { success: false, error: (typeof e?.message === 'string' && e.message.length > 0) ? e.message : String(error) };
       }
     }, invalidPdfData);
 

@@ -86,9 +86,13 @@ export class UnPDFWrapper {
 
   private async getUnpdf(): Promise<UnpdfModule> {
     if (!cachedUnpdf) {
-      // Use Function constructor to avoid Vite/Vitest SSR rewriting dynamic imports into thenable modules.
-      const importUnpdf = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
-      cachedUnpdf = importUnpdf('unpdf') as Promise<UnpdfModule>;
+      if (typeof window !== 'undefined') {
+        cachedUnpdf = import('unpdf') as unknown as Promise<UnpdfModule>;
+      } else {
+        // Use Function constructor to avoid Vite/Vitest SSR rewriting dynamic imports into thenable modules.
+        const importUnpdf = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
+        cachedUnpdf = importUnpdf('unpdf') as unknown as Promise<UnpdfModule>;
+      }
     }
     return await cachedUnpdf;
   }
@@ -97,8 +101,34 @@ export class UnPDFWrapper {
     if (unpdfPdfjsDefined) return;
     const unpdf = await this.getUnpdf();
     if (typeof unpdf.definePDFJSModule === 'function') {
-      const importPdfjs = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
-      await unpdf.definePDFJSModule(() => importPdfjs('pdfjs-dist'));
+      if (typeof window !== 'undefined') {
+        const injected = (window as unknown as { __PDFJS__?: unknown }).__PDFJS__;
+        if (injected) {
+          await unpdf.definePDFJSModule(async () => injected);
+        } else {
+          await unpdf.definePDFJSModule(async () => {
+            const imported = await import('pdfjs-dist');
+            const pdfjs = (imported as { default?: unknown }).default || imported;
+            try {
+              const importWorker = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
+              const workerImported = await importWorker('pdfjs-dist/build/pdf.worker.min.mjs?url');
+              const workerUrl = (workerImported as { default?: unknown }).default;
+              if (typeof workerUrl === 'string') {
+                const withWorker = pdfjs as unknown as { GlobalWorkerOptions?: { workerSrc?: string } };
+                if (withWorker?.GlobalWorkerOptions) {
+                  withWorker.GlobalWorkerOptions.workerSrc = workerUrl;
+                }
+              }
+            } catch {
+              void 0;
+            }
+            return pdfjs;
+          });
+        }
+      } else {
+        const importPdfjs = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
+        await unpdf.definePDFJSModule(() => importPdfjs('pdfjs-dist'));
+      }
     }
     unpdfPdfjsDefined = true;
   }
@@ -438,14 +468,16 @@ export class UnPDFWrapper {
     }
 
     if (options.extractImages) {
-      try {
-        const imageResult = await this.imageExtractor.extractImages(pdfPage as unknown as Parameters<PDFJSImageExtractor['extractImages']>[0]);
-        page.content.images = imageResult.images;
-      } catch {
-        page.content.images = await this.extractImagesFallbackUnpdf(pageNumber);
-      }
+      page.content.images = await this.extractImagesFallbackUnpdf(pageNumber);
       if (page.content.images.length === 0) {
-        page.content.images = await this.extractImagesFallbackUnpdf(pageNumber);
+        try {
+          const imageResult = await this.imageExtractor.extractImages(
+            pdfPage as unknown as Parameters<PDFJSImageExtractor['extractImages']>[0]
+          );
+          page.content.images = imageResult.images;
+        } catch {
+          // ignore
+        }
       }
     }
 

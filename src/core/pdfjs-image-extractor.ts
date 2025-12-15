@@ -450,19 +450,4 @@ export class PDFJSImageExtractor {
     }
     return `data:image/${format};base64,${base64}`;
   }
-
-  // Available for future use when image data is extracted
-  // @ts-expect-error - Intentionally unused, available for future image extraction
-  private convertImageFormat(_data: ArrayBuffer, _format: string): string {
-    const data = _data;
-    const format = _format;
-    // Convert ArrayBuffer to base64 data URL
-    const bytes = new Uint8Array(data);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    const base64 = btoa(binary);
-    return `data:image/${format};base64,${base64}`;
-  }
 }

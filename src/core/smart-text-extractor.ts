@@ -1,4 +1,8 @@
-import type { PDFTextContent, PDFFontInfo } from '../types/pdf.js';
+import type {
+  PDFTextContent,
+  PDFFontInfo
+} from '../types/pdf.js';
+import { deriveFontWeightAndStyle } from '../fonts/font-style.js';
 
 export interface SmartTextExtractionResult {
   text: PDFTextContent[];
@@ -247,22 +251,8 @@ export class SmartTextExtractor {
     item: PDFJSTextItem,
     style: PDFJSFontStyle | null | undefined
   ): { fontWeight: number; fontStyle: 'normal' | 'italic' | 'oblique'; color: string } {
-    const fontName = (style?.fontName || item.fontName || '').toLowerCase();
-
-    let fontWeight = 400;
-    if (fontName.includes('thin') || fontName.includes('100')) fontWeight = 100;
-    else if (fontName.includes('extralight') || fontName.includes('200')) fontWeight = 200;
-    else if (fontName.includes('light') || fontName.includes('300')) fontWeight = 300;
-    else if (fontName.includes('regular') || fontName.includes('normal') || fontName.includes('400')) fontWeight = 400;
-    else if (fontName.includes('medium') || fontName.includes('500')) fontWeight = 500;
-    else if (fontName.includes('semibold') || fontName.includes('600')) fontWeight = 600;
-    else if (fontName.includes('bold') || fontName.includes('700')) fontWeight = 700;
-    else if (fontName.includes('extrabold') || fontName.includes('800')) fontWeight = 800;
-    else if (fontName.includes('black') || fontName.includes('900')) fontWeight = 900;
-
-    let fontStyle: 'normal' | 'italic' | 'oblique' = 'normal';
-    if (fontName.includes('italic')) fontStyle = 'italic';
-    else if (fontName.includes('oblique')) fontStyle = 'oblique';
+    const fontName = (style?.fontName || item.fontName || '');
+    const { fontWeight, fontStyle } = deriveFontWeightAndStyle({ fontName, fontFamily: fontName, fontFlags: 0 });
 
     const color = '#000000';
 

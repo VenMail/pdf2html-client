@@ -84,7 +84,29 @@ export class StatisticalSpaceDetector {
     const multiToken = prevText.length >= 3 && nextText.length >= 3;
     const alphaLike = /[A-Za-z]$/.test(prevText) && /^[A-Za-z]/.test(nextText);
     if (multiToken && alphaLike) {
-      effectiveThreshold = Math.min(effectiveThreshold, 0.32);
+      effectiveThreshold = Math.min(effectiveThreshold, 0.26);
+    }
+
+    // Case boundary: lower-case followed by Upper-case often indicates a missing space between words
+    // (e.g. "GateBoarding", "MuhammedInternational"). Keep this conservative.
+    const caseBoundary = /[a-z]$/.test(prevText) && /^[A-Z]/.test(nextText);
+    if (caseBoundary && prevText.length >= 3 && nextText.length >= 3) {
+      effectiveThreshold = Math.min(effectiveThreshold, 0.14);
+    }
+
+    // Common short connector words often render with very tight glyph gaps in PDFs.
+    // Allow a smaller threshold for these to avoid collapsing phrases like "Airport to".
+    const commonShort = new Set(['to', 'of', 'in', 'on', 'at', 'by', 'or', 'an', 'as', 'if', 'is']);
+    const nextLower = nextText.toLowerCase();
+    const shortConnector = nextLower.length <= 2 && commonShort.has(nextLower);
+    if (shortConnector && /[A-Za-z]$/.test(prevText) && /^[A-Za-z]/.test(nextText)) {
+      effectiveThreshold = Math.min(effectiveThreshold, 0.18);
+    }
+
+    const prevLower = prevText.toLowerCase();
+    const prevIsShortConnector = prevLower.length <= 2 && commonShort.has(prevLower);
+    if (prevIsShortConnector && /[A-Za-z]$/.test(prevText) && /^[A-Za-z]/.test(nextText)) {
+      effectiveThreshold = Math.min(effectiveThreshold, 0.18);
     }
 
     return gapByChar >= effectiveThreshold;

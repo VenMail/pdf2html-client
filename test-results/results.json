@@ -74,25 +74,25 @@
   },
   "suites": [
     {
-      "title": "boarding-pass.spec.ts",
-      "file": "boarding-pass.spec.ts",
+      "title": "source-agreement-semantic.spec.ts",
+      "file": "source-agreement-semantic.spec.ts",
       "column": 0,
       "line": 0,
       "specs": [],
       "suites": [
         {
-          "title": "Boarding Pass PDF Conversion",
-          "file": "boarding-pass.spec.ts",
-          "line": 211,
+          "title": "Source Agreement Semantic Fidelity",
+          "file": "source-agreement-semantic.spec.ts",
+          "line": 150,
           "column": 6,
           "specs": [
             {
-              "title": "should convert boarding_pass.pdf with high fidelity",
-              "ok": true,
+              "title": "should match top area visual fidelity (semantic) >= 97% and keep bold/italics",
+              "ok": false,
               "tags": [],
               "tests": [
                 {
-                  "timeout": 30000,
+                  "timeout": 180000,
                   "annotations": [],
                   "expectedStatus": "passed",
                   "projectId": "chromium",
@@ -101,45 +101,62 @@
                     {
                       "workerIndex": 0,
                       "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 2748,
-                      "errors": [],
+                      "status": "failed",
+                      "duration": 9272,
+                      "error": {
+                        "message": "Error: Top area visual diff ratio should be under 3%\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m0.03\u001b[39m\nReceived:   \u001b[31m0.1813039538322125\u001b[39m",
+                        "stack": "Error: Top area visual diff ratio should be under 3%\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m0.03\u001b[39m\nReceived:   \u001b[31m0.1813039538322125\u001b[39m\n    at C:\\dev\\pdf2html-client\\tests\\browser\\source-agreement-semantic.spec.ts:403:76",
+                        "location": {
+                          "file": "C:\\dev\\pdf2html-client\\tests\\browser\\source-agreement-semantic.spec.ts",
+                          "column": 76,
+                          "line": 403
+                        },
+                        "snippet": "\u001b[0m \u001b[90m 401 |\u001b[39m\n \u001b[90m 402 |\u001b[39m         console\u001b[33m.\u001b[39mlog(\u001b[32m`PDFium: alignment dx=${aligned.dx}, dy=${aligned.dy}; diff ${(diffRatio * 100).toFixed(4)}%`\u001b[39m)\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 403 |\u001b[39m         expect(diffRatio\u001b[33m,\u001b[39m \u001b[32m'Top area visual diff ratio should be under 3%'\u001b[39m)\u001b[33m.\u001b[39mtoBeLessThan(\u001b[35m0.03\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                                                                            \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 404 |\u001b[39m       })\u001b[33m;\u001b[39m\n \u001b[90m 405 |\u001b[39m     })\u001b[33m;\u001b[39m\n \u001b[90m 406 |\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "C:\\dev\\pdf2html-client\\tests\\browser\\source-agreement-semantic.spec.ts",
+                            "column": 76,
+                            "line": 403
+                          },
+                          "message": "Error: Top area visual diff ratio should be under 3%\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m0.03\u001b[39m\nReceived:   \u001b[31m0.1813039538322125\u001b[39m\n\n\u001b[0m \u001b[90m 401 |\u001b[39m\n \u001b[90m 402 |\u001b[39m         console\u001b[33m.\u001b[39mlog(\u001b[32m`PDFium: alignment dx=${aligned.dx}, dy=${aligned.dy}; diff ${(diffRatio * 100).toFixed(4)}%`\u001b[39m)\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 403 |\u001b[39m         expect(diffRatio\u001b[33m,\u001b[39m \u001b[32m'Top area visual diff ratio should be under 3%'\u001b[39m)\u001b[33m.\u001b[39mtoBeLessThan(\u001b[35m0.03\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                                                                            \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 404 |\u001b[39m       })\u001b[33m;\u001b[39m\n \u001b[90m 405 |\u001b[39m     })\u001b[33m;\u001b[39m\n \u001b[90m 406 |\u001b[39m\u001b[0m\n\u001b[2m    at C:\\dev\\pdf2html-client\\tests\\browser\\source-agreement-semantic.spec.ts:403:76\u001b[22m"
+                        }
+                      ],
                       "stdout": [
                         {
-                          "text": "Processing time: 531ms\n"
-                        },
-                        {
-                          "text": "HTML size: 200432 bytes\n"
-                        },
-                        {
-                          "text": "CSS size: 2354 bytes\n"
-                        },
-                        {
-                          "text": "Text elements extracted: 95\n"
-                        },
-                        {
-                          "text": "✓ HTML output saved: C:\\dev\\pdf2html-client\\test-results\\boarding-pass\\boarding_pass_converted.html\n"
-                        },
-                        {
-                          "text": "✓ CSS output saved: C:\\dev\\pdf2html-client\\test-results\\boarding-pass\\boarding_pass_styles.css\n"
-                        },
-                        {
-                          "text": "✓ Extracted text saved: C:\\dev\\pdf2html-client\\test-results\\boarding-pass\\boarding_pass_text.txt\n"
+                          "text": "PDFium: alignment dx=-80, dy=16; diff 18.1304%\n"
                         }
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2025-12-14T20:35:09.049Z",
+                      "startTime": "2025-12-15T16:49:25.543Z",
                       "annotations": [],
-                      "attachments": []
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "C:\\dev\\pdf2html-client\\test-results\\source-agreement-semantic--8305b-ic-97-and-keep-bold-italics-chromium\\test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "C:\\dev\\pdf2html-client\\test-results\\source-agreement-semantic--8305b-ic-97-and-keep-bold-italics-chromium\\error-context.md"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "C:\\dev\\pdf2html-client\\tests\\browser\\source-agreement-semantic.spec.ts",
+                        "column": 76,
+                        "line": 403
+                      }
                     }
                   ],
-                  "status": "expected"
+                  "status": "unexpected"
                 }
               ],
-              "id": "2765b7bd85eb713bb41d-93c8b480666cf939fec5",
-              "file": "boarding-pass.spec.ts",
-              "line": 401,
+              "id": "7f046edd7e4ced951162-e6b4c4861d3aeebee977",
+              "file": "source-agreement-semantic.spec.ts",
+              "line": 174,
               "column": 3
             }
           ]
@@ -149,11 +166,11 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2025-12-14T20:35:04.192Z",
-    "duration": 8746.224,
-    "expected": 1,
+    "startTime": "2025-12-15T16:49:20.792Z",
+    "duration": 15081.116,
+    "expected": 0,
     "skipped": 0,
-    "unexpected": 0,
+    "unexpected": 1,
     "flaky": 0
   }
 }

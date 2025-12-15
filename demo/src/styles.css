@@ -76,6 +76,67 @@ body {
   margin: 0;
 }
 
+.conversion-tuning {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.conversion-tuning .tuning-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.conversion-tuning .tuning-row + .tuning-row {
+  margin-top: 12px;
+}
+
+.conversion-tuning .tuning-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #444;
+}
+
+.conversion-tuning select,
+.conversion-tuning input {
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 13px;
+  background: white;
+  min-width: 160px;
+}
+
+.conversion-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.reconvert-button {
+  padding: 8px 12px;
+  border: 1px solid #ccc;
+  background: white;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.reconvert-button:hover:not(:disabled) {
+  background: #f5f5f5;
+}
+
+.reconvert-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .output-section {
   background: white;
   border-radius: 8px;

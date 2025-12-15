@@ -65,32 +65,6 @@ export class TextProcessor {
     return enhanced;
   }
 
-  // Font weight extraction is now handled by SmartTextExtractor
-  // This method is kept for backward compatibility but should not be used
-  // @ts-expect-error - unused but kept for backward compatibility
-  private _extractFontWeight(
-    fontFamily: string,
-    fontName?: string | undefined
-  ): number {
-    // Fallback only if fontWeight is not already set by SmartTextExtractor
-    const source = (fontName || fontFamily).toLowerCase();
-
-    if (source.includes('thin') || source.includes('100')) return 100;
-    if (source.includes('extralight') || source.includes('200')) return 200;
-    if (source.includes('light') || source.includes('300')) return 300;
-    if (source.includes('regular') || source.includes('normal') || source.includes('400')) return 400;
-    if (source.includes('medium') || source.includes('500')) return 500;
-    if (source.includes('semibold') || source.includes('600')) return 600;
-    if (source.includes('bold') || source.includes('700')) return 700;
-    if (source.includes('extrabold') || source.includes('800')) return 800;
-    if (source.includes('black') || source.includes('900')) return 900;
-
-    if (source.includes('bold')) return 700;
-    if (source.includes('heavy')) return 900;
-
-    return 400;
-  }
-
   private detectHeadingLevel(
     item: PDFTextContent,
     allItems: PDFTextContent[]

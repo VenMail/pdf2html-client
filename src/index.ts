@@ -47,7 +47,7 @@ export class PDF2HTML {
       };
     }
 
-    this.parser = new PDFParser('auto');
+    this.parser = new PDFParser(this.config.parserStrategy ?? 'auto');
     this.fontDetector = new FontDetector();
 
     if (this.config.enableFontMapping) {
@@ -98,6 +98,21 @@ export class PDF2HTML {
         extractAnnotations: false
       }
     );
+
+    try {
+      const g = globalThis as unknown as {
+        __PDF2HTML_DEBUG_DECODE__?: boolean;
+        __PDF2HTML_DECODE_ARTIFACT__?: unknown;
+      };
+      if (g.__PDF2HTML_DEBUG_DECODE__ === true) {
+        g.__PDF2HTML_DECODE_ARTIFACT__ = {
+          parserStrategy: this.config.parserStrategy ?? 'auto',
+          document
+        };
+      }
+    } catch {
+      // ignore
+    }
 
     this.reportProgress(progressCallback, {
       stage: 'parsing',

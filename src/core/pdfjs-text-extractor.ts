@@ -1,4 +1,5 @@
 import type { PDFTextContent, PDFFontInfo } from '../types/pdf.js';
+import { deriveFontWeightAndStyle } from '../fonts/font-style.js';
 
 export interface PDFJSTextExtractionResult {
   text: PDFTextContent[];
@@ -110,39 +111,24 @@ export class PDFJSTextExtractor {
     const style = item.fontName ? styles[item.fontName] : null;
     const fontSize = style?.fontSize || item.height || 12;
     const fontFamily = style?.fontFamily || 'Arial';
-    const fontNameLower = (style?.fontName || item.fontName || '').toLowerCase();
-    const fontFamilyLower = (fontFamily || '').toLowerCase();
+    const { fontWeight: weight, fontStyle: styleHint } = deriveFontWeightAndStyle({
+      fontName: style?.fontName || item.fontName || '',
+      fontFamily,
+      fontFlags: 0
+    });
 
-    const deriveWeight = (s: string): number => {
-      if (!s) return 400;
-      if (s.includes('thin') || s.includes('100')) return 100;
-      if (s.includes('extralight') || s.includes('200')) return 200;
-      if (s.includes('light') || s.includes('300')) return 300;
-      if (s.includes('medium') || s.includes('500')) return 500;
-      if (s.includes('semibold') || s.includes('600')) return 600;
-      if (s.includes('bold') || s.includes('700')) return 700;
-      if (s.includes('extrabold') || s.includes('800')) return 800;
-      if (s.includes('black') || s.includes('900')) return 900;
-      return 400;
-    };
-
-    const deriveStyle = (s: string): 'normal' | 'italic' | 'oblique' => {
-      if (!s) return 'normal';
-      if (s.includes('italic')) return 'italic';
-      if (s.includes('oblique')) return 'oblique';
-      return 'normal';
-    };
-
-    const weight = Math.max(deriveWeight(fontNameLower), deriveWeight(fontFamilyLower));
-    const styleHint = (deriveStyle(fontNameLower) !== 'normal') ? deriveStyle(fontNameLower) : deriveStyle(fontFamilyLower);
-
-    // Estimate width and height
-    // Use transform scale when present to avoid clipping rotated/scaled text
-    const baseWidth = item.width || (item.str.length * fontSize * 0.6);
+    // Estimate width and height.
+    // IMPORTANT: pdf.js text items often provide `item.width`/`item.height` in page units already.
+    // Applying the transform scale again will double-scale and produce huge boxes.
+    // Only use transform-derived scale factors when we have to fall back to estimation.
     const scaleX = Math.hypot(a, b) || 1;
     const scaleY = Math.hypot(c, d) || 1;
-    const rawWidth = baseWidth * scaleX;
-    const rawHeight = (item.height || fontSize) * scaleY;
+    const baseWidth = typeof item.width === 'number' ? item.width : item.str.length * fontSize * 0.6;
+    const baseHeight = typeof item.height === 'number' ? item.height : fontSize;
+
+    const rawWidth = typeof item.width === 'number' ? baseWidth : baseWidth * scaleX;
+    const rawHeight = typeof item.height === 'number' ? baseHeight : baseHeight * scaleY;
+
     const width = Math.abs(rotationDeg % 180) === 90 ? rawHeight : rawWidth;
     const height = Math.abs(rotationDeg % 180) === 90 ? rawWidth : rawHeight;
 
