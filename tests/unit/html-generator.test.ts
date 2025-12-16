@@ -48,6 +48,260 @@ describe('HTMLGenerator', () => {
     expect(output.css).toBeDefined();
   });
 
+  it('should avoid injecting whitespace padding between opening quote and following word (semantic flexbox)', () => {
+    const generator = new HTMLGenerator({
+      format: 'html+inline-css',
+      preserveLayout: true,
+      textLayout: 'semantic',
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64',
+      useFlexboxLayout: true
+    });
+
+    const y = 700;
+    const mockDocument: PDFDocument = {
+      pageCount: 1,
+      metadata: {},
+      pages: [
+        {
+          pageNumber: 0,
+          width: 612,
+          height: 792,
+          content: {
+            text: [
+              { text: 'Agreement (“', x: 50, y, width: 80, height: 10, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' },
+              { text: 'Agreement', x: 131, y, width: 60, height: 10, fontSize: 10, fontFamily: 'DejaVuSans-Bold', fontWeight: 700, fontStyle: 'normal', color: '#000000' },
+              { text: '”)', x: 192, y, width: 12, height: 10, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' }
+            ],
+            images: [],
+            graphics: [],
+            forms: [],
+            annotations: []
+          }
+        }
+      ]
+    };
+
+    const output = generator.generate(mockDocument, [], { pageCount: 1, processingTime: 0, ocrUsed: false, fontMappings: 0 });
+
+    expect(output.html).toContain('Agreement');
+
+    const m = output.html.match(/<span class="pdf-sem-text" style="([^"]*)">\s*<strong[^>]*>Agreement<\/strong>/);
+    expect(m, 'Expected to find a semantic text wrapper for bold Agreement').not.toBeNull();
+    const style = m ? m[1] : '';
+    expect(style).not.toMatch(/padding-left\s*:/);
+    expect(style).not.toMatch(/padding-right\s*:/);
+  });
+
+  it('should merge same-style consecutive lines into a flowing paragraph when enabled (semantic flexbox)', () => {
+    const generator = new HTMLGenerator({
+      format: 'html+inline-css',
+      preserveLayout: true,
+      textLayout: 'semantic',
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64',
+      useFlexboxLayout: true,
+      semanticPositionedLayout: { mergeSameStyleLines: true }
+    });
+
+    const y1 = 700;
+    const y2 = 686;
+    const y3 = 672;
+
+    const mockDocument: PDFDocument = {
+      pageCount: 1,
+      metadata: {},
+      pages: [
+        {
+          pageNumber: 0,
+          width: 612,
+          height: 792,
+          content: {
+            text: [
+              { text: 'First bold line', x: 50, y: y1, width: 120, height: 10, fontSize: 10, fontFamily: 'DejaVuSans-Bold', fontWeight: 700, fontStyle: 'normal', color: '#000000' },
+              { text: 'Second bold line', x: 50, y: y2, width: 140, height: 10, fontSize: 10, fontFamily: 'DejaVuSans-Bold', fontWeight: 700, fontStyle: 'normal', color: '#000000' },
+              { text: 'Third bold line', x: 50, y: y3, width: 130, height: 10, fontSize: 10, fontFamily: 'DejaVuSans-Bold', fontWeight: 700, fontStyle: 'normal', color: '#000000' }
+            ],
+            images: [],
+            graphics: [],
+            forms: [],
+            annotations: []
+          }
+        }
+      ]
+    };
+
+    const output = generator.generate(mockDocument, [], { pageCount: 1, processingTime: 0, ocrUsed: false, fontMappings: 0 });
+
+    expect(output.html).toContain('pdf-sem-paragraph');
+    expect(output.html).toContain('First bold line');
+    expect(output.html).toContain('Second bold line');
+    expect(output.html).toContain('Third bold line');
+    const paraCount = (output.html.match(/pdf-sem-paragraph/g) || []).length;
+    expect(paraCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('should merge multi-run lines when all runs share the same style (semantic flexbox)', () => {
+    const generator = new HTMLGenerator({
+      format: 'html+inline-css',
+      preserveLayout: true,
+      textLayout: 'semantic',
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64',
+      useFlexboxLayout: true,
+      semanticPositionedLayout: { mergeSameStyleLines: true }
+    });
+
+    const y1 = 700;
+    const y2 = 686;
+
+    const mockDocument: PDFDocument = {
+      pageCount: 1,
+      metadata: {},
+      pages: [
+        {
+          pageNumber: 0,
+          width: 612,
+          height: 792,
+          content: {
+            text: [
+              // Line 1 split into multiple bold runs
+              { text: 'including any', x: 50, y: y1, width: 70, height: 10, fontSize: 10, fontFamily: 'DejaVuSans-Bold', fontWeight: 700, fontStyle: 'normal', color: '#000000' },
+              { text: ' agreed TOP', x: 122, y: y1, width: 70, height: 10, fontSize: 10, fontFamily: 'DejaVuSans-Bold', fontWeight: 700, fontStyle: 'normal', color: '#000000' },
+              // Line 2 split into multiple bold runs
+              { text: 'electronic and', x: 50, y: y2, width: 75, height: 10, fontSize: 10, fontFamily: 'DejaVuSans-Bold', fontWeight: 700, fontStyle: 'normal', color: '#000000' },
+              { text: ' is not signed', x: 127, y: y2, width: 75, height: 10, fontSize: 10, fontFamily: 'DejaVuSans-Bold', fontWeight: 700, fontStyle: 'normal', color: '#000000' }
+            ],
+            images: [],
+            graphics: [],
+            forms: [],
+            annotations: []
+          }
+        }
+      ]
+    };
+
+    const output = generator.generate(mockDocument, [], { pageCount: 1, processingTime: 0, ocrUsed: false, fontMappings: 0 });
+
+    expect(output.html).toContain('pdf-sem-paragraph');
+    expect(output.html).toContain('including any');
+    expect(output.html).toContain('agreed TOP');
+    expect(output.html).toContain('electronic and');
+    expect(output.html).toContain('is not signed');
+  });
+
+  it('should not merge same-style lines when a region looks structured (large column gaps) (semantic flexbox)', () => {
+    const generator = new HTMLGenerator({
+      format: 'html+inline-css',
+      preserveLayout: true,
+      textLayout: 'semantic',
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64',
+      useFlexboxLayout: true,
+      semanticPositionedLayout: { mergeSameStyleLines: true }
+    });
+
+    const y1 = 700;
+    const y2 = 686;
+
+    const mockDocument: PDFDocument = {
+      pageCount: 1,
+      metadata: {},
+      pages: [
+        {
+          pageNumber: 0,
+          width: 612,
+          height: 792,
+          content: {
+            text: [
+              // Table-like header row with large gaps between columns
+              { text: 'Flight', x: 50, y: y1, width: 40, height: 10, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' },
+              { text: 'Terminal/Gate', x: 200, y: y1, width: 90, height: 10, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' },
+              { text: 'Boarding Time', x: 350, y: y1, width: 90, height: 10, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' },
+              { text: 'Seat', x: 520, y: y1, width: 30, height: 10, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' },
+              // Second row, still table-like
+              { text: 'ET902', x: 50, y: y2, width: 45, height: 10, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' },
+              { text: '21:15', x: 350, y: y2, width: 35, height: 10, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' },
+              { text: '27B', x: 520, y: y2, width: 25, height: 10, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' }
+            ],
+            images: [],
+            graphics: [],
+            forms: [],
+            annotations: []
+          }
+        }
+      ]
+    };
+
+    const output = generator.generate(mockDocument, [], { pageCount: 1, processingTime: 0, ocrUsed: false, fontMappings: 0 });
+
+    // We should fall back to per-line positioned rendering inside the region (no paragraph merging)
+    expect(output.html).not.toContain('pdf-sem-paragraph');
+    expect(output.html).toContain('pdf-sem-line');
+    expect(output.html).toContain('Flight');
+    expect(output.html).toContain('Terminal/Gate');
+    expect(output.html).toContain('Boarding Time');
+    expect(output.html).toContain('Seat');
+  });
+
+  it('should preserve mixed inline styling and punctuation when merging lines into a paragraph (semantic flexbox)', () => {
+    const generator = new HTMLGenerator({
+      format: 'html+inline-css',
+      preserveLayout: true,
+      textLayout: 'semantic',
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64',
+      useFlexboxLayout: true,
+      semanticPositionedLayout: { mergeSameStyleLines: true }
+    });
+
+    const y1 = 700;
+    const y2 = 686;
+
+    const mockDocument: PDFDocument = {
+      pageCount: 1,
+      metadata: {},
+      pages: [
+        {
+          pageNumber: 0,
+          width: 612,
+          height: 792,
+          content: {
+            text: [
+              // Line 1: mixed styles and curly quotes
+              { text: 'This is an ', x: 50, y: y1, width: 55, height: 10, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' },
+              { text: 'Agreement', x: 106, y: y1, width: 60, height: 10, fontSize: 10, fontFamily: 'DejaVuSans-Bold', fontWeight: 700, fontStyle: 'normal', color: '#000000' },
+              { text: ' (“', x: 168, y: y1, width: 12, height: 10, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' },
+              { text: 'Agreement', x: 182, y: y1, width: 60, height: 10, fontSize: 10, fontFamily: 'DejaVuSans-Bold', fontWeight: 700, fontStyle: 'italic', color: '#000000' },
+              { text: '”) and more.', x: 244, y: y1, width: 70, height: 10, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' },
+              // Line 2: continuation with different emphasis
+              { text: 'Second line continues.', x: 50, y: y2, width: 120, height: 10, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' }
+            ],
+            images: [],
+            graphics: [],
+            forms: [],
+            annotations: []
+          }
+        }
+      ]
+    };
+
+    const output = generator.generate(mockDocument, [], { pageCount: 1, processingTime: 0, ocrUsed: false, fontMappings: 0 });
+
+    expect(output.html).toContain('pdf-sem-paragraph');
+    expect(output.html).toContain('“');
+    expect(output.html).toContain('”');
+    const boldCount = (output.html.match(/<strong[^>]*>Agreement<\/strong>/g) || []).length;
+    expect(boldCount).toBeGreaterThanOrEqual(1);
+    const emCount = (output.html.match(/<em[^>]*>Agreement<\/em>/g) || []).length;
+    expect(emCount).toBeGreaterThanOrEqual(1);
+  });
+
   it('should preserve bold segments in smart text flow (passes>=2)', () => {
     const generator = new HTMLGenerator({
       format: 'html+inline-css',

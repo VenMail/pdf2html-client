@@ -58,10 +58,11 @@ export class FontMetricsComparator {
   private estimateGoogleFontMetrics(
     googleFont: GoogleFont,
     variant: string,
-    _unitsPerEm: number
+    unitsPerEm: number
   ): FontMetrics {
     // Estimate metrics based on font category and variant
     // These are rough estimates - actual metrics would require loading the font
+    void unitsPerEm;
     const baseSize = 1000; // Normalize to 1000 units
     const weight = parseInt(variant) || 400;
 

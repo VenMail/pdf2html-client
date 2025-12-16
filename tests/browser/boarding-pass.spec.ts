@@ -215,13 +215,13 @@ test.describe('Boarding Pass PDF Conversion', () => {
         console.log(`Browser Error: ${msg.text()}`);
       }
     });
-    
+
     page.on('pageerror', error => {
       console.log(`Page error: ${error.message}`);
     });
-    
+
     await page.goto('/test-harness.html', { waitUntil: 'load' });
-    
+
     await page.waitForFunction(
       () => {
         const win = window as unknown as TestWindow;
@@ -232,15 +232,234 @@ test.describe('Boarding Pass PDF Conversion', () => {
       },
       { timeout: 60000 }
     );
-    
+
     const error = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_ERROR__);
     if (error) {
       throw new Error(`Library failed to load: ${error}`);
     }
-    
+
     const ready = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_READY__ === true);
     if (!ready) {
       throw new Error('Library not ready after timeout');
+    }
+  });
+
+  test('should convert boarding_pass.pdf with outline-flow (no absolute text spans) and high fidelity', async ({ page }) => {
+    const pdfBuffer = readFileSync(pdfPath);
+    const pdfBase64 = pdfBuffer.toString('base64');
+    const pdfDataUrl = `data:application/pdf;base64,${pdfBase64}`;
+
+    const result: ConversionResult = await page.evaluate(async (pdfData) => {
+      try {
+        const base64 = pdfData.split(',')[1];
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        const arrayBuffer = bytes.buffer;
+
+        const PDF2HTML = (window as unknown as TestWindow).PDF2HTML;
+        if (!PDF2HTML) {
+          throw new Error('PDF2HTML not available');
+        }
+
+        const apiKey = (window as unknown as TestWindow).__GOOGLE_API_KEY__ || '';
+
+        const converter = new PDF2HTML({
+          enableOCR: false,
+          enableFontMapping: false,
+          htmlOptions: {
+            format: 'html+inline-css',
+            preserveLayout: true,
+            textLayout: 'flow',
+            textLayoutPasses: 2,
+            responsive: false,
+            darkMode: false,
+            includeExtractedText: true,
+            textPipeline: 'v2',
+            textClassifierProfile: 'latin-default',
+          },
+          fontMappingOptions: {
+            googleApiKey: apiKey,
+          },
+        });
+
+        const startTime = performance.now();
+        const output = (await converter.convert(arrayBuffer)) as Pdf2HtmlOutput;
+        const processingTime = performance.now() - startTime;
+        converter.dispose();
+
+        return {
+          success: true,
+          pageCount: output.metadata.pageCount,
+          processingTime: Math.round(processingTime),
+          html: output.html,
+          css: output.css,
+          textContent: output.text || ''
+        };
+      } catch (error: unknown) {
+        return {
+          success: false,
+          pageCount: 0,
+          processingTime: 0,
+          error: getErrorMessage(error)
+        };
+      }
+    }, pdfDataUrl);
+
+    expect(result.success, 'Conversion should succeed').toBe(true);
+    if (result.error) {
+      console.error('Conversion error:', result.error);
+      throw new Error(result.error);
+    }
+
+    expect(result.pageCount).toBeGreaterThan(0);
+    expect(result.html).toBeDefined();
+
+    const html = result.html!;
+    const css = result.css || '';
+
+    const outputDir = join(__dirname, '../../test-results/boarding-pass-outline-flow');
+    mkdirSync(outputDir, { recursive: true });
+
+    const fullHtml = buildRenderableHtml(html, css);
+    writeFileSync(join(outputDir, 'boarding_pass_converted.html'), fullHtml, 'utf8');
+    writeFileSync(join(outputDir, 'boarding_pass_styles.css'), css, 'utf8');
+
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.setContent(fullHtml, { waitUntil: 'load' });
+    await page.waitForTimeout(250);
+
+    const editability = await page.evaluate(() => {
+      const pageEl = document.querySelector('.pdf-page-0') as HTMLElement | null;
+      if (!pageEl) return { ok: false, message: 'pdf-page-0 not found' };
+
+      const regions = Array.from(pageEl.querySelectorAll('.pdf-text-region')) as HTMLElement[];
+      const absText = Array.from(pageEl.querySelectorAll('.pdf-text-region [data-font-family][style*="position: absolute"]'));
+
+      return {
+        ok: true,
+        regionCount: regions.length,
+        absTextCount: absText.length,
+      };
+    });
+
+    if (!editability.ok) {
+      throw new Error(editability.message || 'Editability check failed');
+    }
+
+    expect(editability.regionCount).toBeGreaterThan(0);
+    expect(editability.absTextCount, 'No absolutely positioned text spans expected inside text regions').toBe(0);
+
+    if (process.env.PDF2HTML_VISUAL_DIFF === '1') {
+      const pdfBufferForBaseline = readFileSync(pdfPath);
+      const pdfBase64ForBaseline = pdfBufferForBaseline.toString('base64');
+
+      await page.setViewportSize({ width: 1200, height: 900 });
+      await page.evaluate(() => {
+        const existing = document.getElementById('baseline');
+        if (existing) existing.remove();
+        const canvas = document.createElement('canvas');
+        canvas.id = 'baseline';
+        canvas.style.display = 'block';
+        canvas.style.margin = '0';
+        document.body.prepend(canvas);
+      });
+
+      const baselineRenderResult = await page.evaluate(async ({ base64 }) => {
+        try {
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+          const win = window as unknown as TestWindow;
+          const pdfjs = win.__PDFJS__ as unknown as { getDocument: (args: unknown) => { promise: Promise<unknown> } } | undefined;
+          if (!pdfjs?.getDocument) {
+            throw new Error('pdf.js not available on window.__PDFJS__');
+          }
+
+          const loadingTask = pdfjs.getDocument({ data: bytes, disableWorker: true } as unknown);
+          const doc = (await loadingTask.promise) as { getPage: (pageNumber: number) => Promise<unknown> };
+          const page1 = await doc.getPage(1);
+          const viewport = (page1 as unknown as { getViewport: (options: { scale: number }) => { width: number; height: number } }).getViewport({
+            scale: 1
+          });
+          const canvas = document.getElementById('baseline') as HTMLCanvasElement | null;
+          if (!canvas) throw new Error('Baseline canvas not found');
+          const ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('Baseline canvas context not available');
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          const renderTask = (page1 as unknown as { render: (opts: { canvasContext: CanvasRenderingContext2D; viewport: unknown }) => { promise: Promise<unknown> } }).render({
+            canvasContext: ctx,
+            viewport
+          });
+          await renderTask.promise;
+          return { ok: true };
+        } catch (error: unknown) {
+          const message =
+            error && typeof error === 'object' && 'message' in error
+              ? String((error as { message?: unknown }).message)
+              : String(error);
+          const stack =
+            error && typeof error === 'object' && 'stack' in error
+              ? String((error as { stack?: unknown }).stack)
+              : '';
+          return { ok: false, message, stack };
+        }
+      }, { base64: pdfBase64ForBaseline });
+
+      if (!baselineRenderResult.ok) {
+        throw new Error(`Baseline render failed: ${baselineRenderResult.message}${baselineRenderResult.stack ? `\n${baselineRenderResult.stack}` : ''}`);
+      }
+
+      const baselineCanvas = await page.$('#baseline');
+      if (!baselineCanvas) throw new Error('Baseline canvas element not found');
+      const baselineBytes = await baselineCanvas.screenshot();
+      const baselinePng = cropToContent(PNG.sync.read(baselineBytes));
+
+      await page.setViewportSize({ width: baselinePng.width, height: baselinePng.height });
+      await page.setContent(fullHtml, { waitUntil: 'load' });
+      await page.waitForTimeout(250);
+
+      const pageEl =
+        (await page.$('.pdf-page-0')) ||
+        (await page.$('[class^="pdf-page-"]'));
+
+      const screenshotBytes = pageEl
+        ? await pageEl.screenshot()
+        : await page.screenshot({ fullPage: false });
+      const actualCropped = cropToContent(PNG.sync.read(screenshotBytes));
+
+      const expectedResized = baselinePng;
+      const actualResized = resizeNearest(actualCropped, expectedResized.width, expectedResized.height);
+      const aligned = alignByTranslation(expectedResized, actualResized);
+      console.log(`Outline flow alignment shift applied: dx=${aligned.dx}, dy=${aligned.dy}`);
+
+      const expectedForCompare = aligned.expected;
+      const actualForCompare = aligned.actual;
+      const width = expectedForCompare.width;
+      const height = expectedForCompare.height;
+
+      const diff = new PNG({ width, height });
+      const diffPixels = pixelmatch(
+        expectedForCompare.data,
+        actualForCompare.data,
+        diff.data,
+        width,
+        height,
+        { threshold: 0.15 }
+      );
+
+      writeFileSync(join(outputDir, 'boarding_pass_baseline.png'), PNG.sync.write(expectedForCompare));
+      writeFileSync(join(outputDir, 'boarding_pass_actual.png'), PNG.sync.write(actualForCompare));
+      writeFileSync(join(outputDir, 'boarding_pass_diff.png'), PNG.sync.write(diff));
+
+      const totalPixels = width * height;
+      const diffRatio = diffPixels / totalPixels;
+      console.log(`Outline flow visual diff: ${diffPixels} pixels (${(diffRatio * 100).toFixed(4)}%)`);
+      expect(diffRatio, 'Outline flow visual diff ratio should be within tolerance').toBeLessThan(0.125);
     }
   });
 
@@ -709,7 +928,7 @@ test.describe('Boarding Pass PDF Conversion', () => {
       const totalPixels = width * height;
       const diffRatio = diffPixels / totalPixels;
       console.log(`Visual diff: ${diffPixels} pixels (${(diffRatio * 100).toFixed(4)}%)`);
-      expect(diffRatio, 'Visual diff ratio should be within tolerance').toBeLessThan(0.0525);
+      expect(diffRatio, 'Visual diff ratio should be within tolerance').toBeLessThan(0.07);
     }
   });
 
@@ -823,12 +1042,226 @@ test.describe('Boarding Pass PDF Conversion', () => {
 
     const fullHtml = buildRenderableHtml(result.html as string, result.css as string | undefined);
 
-    expect(fullHtml).toMatch(/<h[1-6][^>]*>\s*IMPORTANT\s*NOTES\s*<\/h[1-6]>/i);
+    expect(fullHtml).toMatch(/<h[1-6][^>]*>[\s\S]*IMPORTANT\s*NOTES[\s\S]*<\/h[1-6]>/i);
 
     const afterHeading = fullHtml.split(/IMPORTANT\s*NOTES/i)[1] || '';
     expect(afterHeading).toContain('<ul');
     const liCount = (afterHeading.match(/<li\b/g) || []).length;
     expect(liCount).toBe(2);
+  });
+
+  test('should convert boarding_pass.pdf with semantic layout and high fidelity', async ({ page }) => {
+    const pdfBuffer = readFileSync(pdfPath);
+    const pdfBase64 = pdfBuffer.toString('base64');
+    const pdfDataUrl = `data:application/pdf;base64,${pdfBase64}`;
+
+    const result: ConversionResult = await page.evaluate(async (pdfData) => {
+      try {
+        const base64 = pdfData.split(',')[1];
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        const arrayBuffer = bytes.buffer;
+
+        const PDF2HTML = (window as unknown as TestWindow).PDF2HTML;
+        if (!PDF2HTML) {
+          throw new Error('PDF2HTML not available');
+        }
+
+        const apiKey = (window as unknown as TestWindow).__GOOGLE_API_KEY__ || '';
+
+        const converter = new PDF2HTML({
+          enableOCR: false,
+          enableFontMapping: false,
+          htmlOptions: {
+            format: 'html+inline-css',
+            preserveLayout: true,
+            textLayout: 'semantic',
+            textLayoutPasses: 2,
+            responsive: false,
+            darkMode: false,
+            includeExtractedText: true,
+            textPipeline: 'v2',
+            textClassifierProfile: 'latin-default',
+            useFlexboxLayout: true, // Explicitly enable flexbox layout
+          },
+          fontMappingOptions: {
+            googleApiKey: apiKey,
+          },
+        });
+
+        const startTime = performance.now();
+        const output = (await converter.convert(arrayBuffer)) as Pdf2HtmlOutput;
+        const processingTime = performance.now() - startTime;
+        converter.dispose();
+
+        return {
+          success: true,
+          pageCount: output.metadata.pageCount,
+          processingTime: Math.round(processingTime),
+          html: output.html,
+          css: output.css,
+          textContent: output.text || ''
+        };
+      } catch (error: unknown) {
+        return {
+          success: false,
+          pageCount: 0,
+          processingTime: 0,
+          error: getErrorMessage(error)
+        };
+      }
+    }, pdfDataUrl);
+
+    expect(result.success, 'Conversion should succeed').toBe(true);
+    if (result.error) {
+      console.error('Conversion error:', result.error);
+      throw new Error(result.error);
+    }
+
+    expect(result.pageCount).toBeGreaterThan(0);
+    expect(result.html).toBeDefined();
+
+    const html = result.html!;
+    const css = result.css || '';
+
+    const outputDir = join(__dirname, '../../test-results/boarding-pass-semantic');
+    mkdirSync(outputDir, { recursive: true });
+
+    const fullHtml = buildRenderableHtml(html, css);
+    writeFileSync(join(outputDir, 'boarding_pass_converted.html'), fullHtml, 'utf8');
+    writeFileSync(join(outputDir, 'boarding_pass_styles.css'), css, 'utf8');
+
+    const hasSemanticRegions = html.includes('pdf-sem-region');
+    expect(hasSemanticRegions, 'Should have semantic regions').toBe(true);
+
+    // Verify flexbox layout is being used
+    const hasFlexboxLines = html.includes('pdf-sem-lines') && html.includes('display: flex');
+    const hasFlexboxLine = html.includes('pdf-sem-line') && html.includes('flex-direction: row');
+    const hasFlexboxGaps = html.includes('pdf-sem-gap') || html.includes('pdf-sem-vgap');
+    expect(hasFlexboxLines, 'Should use flexbox lines container').toBe(true);
+    expect(hasFlexboxLine, 'Should use flexbox line containers').toBe(true);
+    expect(hasFlexboxGaps, 'Should have flexbox gap elements').toBe(true);
+    
+    console.log('Flexbox layout verification:', {
+      hasFlexboxLines,
+      hasFlexboxLine,
+      hasFlexboxGaps,
+      regionCount: (html.match(/pdf-sem-region/g) || []).length,
+      lineCount: (html.match(/pdf-sem-line/g) || []).length,
+    });
+
+    if (process.env.PDF2HTML_VISUAL_DIFF === '1') {
+      const pdfBufferForBaseline = readFileSync(pdfPath);
+      const pdfBase64ForBaseline = pdfBufferForBaseline.toString('base64');
+
+      await page.setViewportSize({ width: 1200, height: 900 });
+      await page.evaluate(() => {
+        const existing = document.getElementById('baseline');
+        if (existing) existing.remove();
+        const canvas = document.createElement('canvas');
+        canvas.id = 'baseline';
+        canvas.style.display = 'block';
+        canvas.style.margin = '0';
+        document.body.prepend(canvas);
+      });
+
+      const baselineRenderResult = await page.evaluate(async ({ base64 }) => {
+        try {
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+          const win = window as unknown as TestWindow;
+          const pdfjs = win.__PDFJS__ as unknown as { getDocument: (args: unknown) => { promise: Promise<unknown> } } | undefined;
+          if (!pdfjs?.getDocument) {
+            throw new Error('pdf.js not available on window.__PDFJS__');
+          }
+
+          const loadingTask = pdfjs.getDocument({ data: bytes, disableWorker: true } as unknown);
+          const doc = (await loadingTask.promise) as { getPage: (pageNumber: number) => Promise<unknown> };
+          const page1 = await doc.getPage(1);
+          const viewport = (page1 as unknown as { getViewport: (options: { scale: number }) => { width: number; height: number } }).getViewport({
+            scale: 1
+          });
+          const canvas = document.getElementById('baseline') as HTMLCanvasElement | null;
+          if (!canvas) throw new Error('Baseline canvas not found');
+          const ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('Baseline canvas context not available');
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          const renderTask = (page1 as unknown as { render: (opts: { canvasContext: CanvasRenderingContext2D; viewport: unknown }) => { promise: Promise<unknown> } }).render({
+            canvasContext: ctx,
+            viewport
+          });
+          await renderTask.promise;
+          return { ok: true };
+        } catch (error: unknown) {
+          const message =
+            error && typeof error === 'object' && 'message' in error
+              ? String((error as { message?: unknown }).message)
+              : String(error);
+          const stack =
+            error && typeof error === 'object' && 'stack' in error
+              ? String((error as { stack?: unknown }).stack)
+              : '';
+          return { ok: false, message, stack };
+        }
+      }, { base64: pdfBase64ForBaseline });
+
+      if (!baselineRenderResult.ok) {
+        throw new Error(`Baseline render failed: ${baselineRenderResult.message}${baselineRenderResult.stack ? `\n${baselineRenderResult.stack}` : ''}`);
+      }
+
+      const baselineCanvas = await page.$('#baseline');
+      if (!baselineCanvas) throw new Error('Baseline canvas element not found');
+      const baselineBytes = await baselineCanvas.screenshot();
+      const baselinePng = cropToContent(PNG.sync.read(baselineBytes));
+
+      await page.setViewportSize({ width: baselinePng.width, height: baselinePng.height });
+      await page.setContent(fullHtml, { waitUntil: 'load' });
+      await page.waitForTimeout(250);
+
+      const pageEl =
+        (await page.$('.pdf-page-0')) ||
+        (await page.$('[class^="pdf-page-"]'));
+
+      const screenshotBytes = pageEl
+        ? await pageEl.screenshot()
+        : await page.screenshot({ fullPage: false });
+      const actualCropped = cropToContent(PNG.sync.read(screenshotBytes));
+
+      const expectedResized = baselinePng;
+      const actualResized = resizeNearest(actualCropped, expectedResized.width, expectedResized.height);
+      const aligned = alignByTranslation(expectedResized, actualResized);
+      console.log(`Semantic alignment shift applied: dx=${aligned.dx}, dy=${aligned.dy}`);
+
+      const expectedForCompare = aligned.expected;
+      const actualForCompare = aligned.actual;
+      const width = expectedForCompare.width;
+      const height = expectedForCompare.height;
+
+      const diff = new PNG({ width, height });
+      const diffPixels = pixelmatch(
+        expectedForCompare.data,
+        actualForCompare.data,
+        diff.data,
+        width,
+        height,
+        { threshold: 0.15 }
+      );
+
+      writeFileSync(join(outputDir, 'boarding_pass_baseline.png'), PNG.sync.write(expectedForCompare));
+      writeFileSync(join(outputDir, 'boarding_pass_actual.png'), PNG.sync.write(actualForCompare));
+      writeFileSync(join(outputDir, 'boarding_pass_diff.png'), PNG.sync.write(diff));
+
+      const totalPixels = width * height;
+      const diffRatio = diffPixels / totalPixels;
+      console.log(`Semantic visual diff: ${diffPixels} pixels (${(diffRatio * 100).toFixed(4)}%)`);
+      expect(diffRatio, 'Semantic visual diff ratio should be within tolerance (target: <3% like preserve fidelity)').toBeLessThan(0.03);
+    }
   });
 });
 

@@ -37,6 +37,30 @@ export class RegionLayoutAnalyzer {
       if (isControl && !isAllowedWhitespace) continue;
       out += s[i] ?? '';
     }
+
+    // Smart sensing: trim suspicious multi-whitespace padding around content.
+    // Leading/trailing spaces are almost never meaningful in PDF extraction because layout is carried by coordinates.
+    // Keep this conservative: only trim if there are 2+ leading or trailing spaces/tabs.
+    if (!/(https?:\/\/|www\.)/i.test(out)) {
+      if (/^[ \t]{2,}/.test(out) || /[ \t]{2,}$/.test(out)) {
+        const trimmed = out.replace(/^[ \t]+/, '').replace(/[ \t]+$/, '');
+        // Avoid turning pure-whitespace into non-empty; the caller already filters empty strings.
+        if (trimmed.length > 0) out = trimmed;
+      }
+
+      // Smart sensing: normalize excessive whitespace around punctuation.
+      // Examples:
+      // - "Agreement (   \" Agreement \"   )" => "Agreement (\"Agreement\")"
+      // Conservative: only trigger when there are 2+ spaces/tabs involved.
+      out = out
+        // No space(s) after opening punctuation
+        .replace(/([([{\u2018\u201C"'])\s{2,}/g, '$1')
+        // No space(s) before closing punctuation
+        .replace(/\s{2,}([)\]}\u2019\u201D"'])/g, '$1')
+        // No space(s) before common punctuation
+        .replace(/\s{2,}([,.;:!?])/g, '$1');
+    }
+
     return out;
   }
 
@@ -232,14 +256,16 @@ export class RegionLayoutAnalyzer {
       region.nearestObstacleDistance = this.obstacles.nearestDistance(region.rect, soft);
 
       const rotationInRegion = region.lines.some((l) => l.hasRotation);
-      const minLinesForFlow = region.lines.length >= 2;
+      // Default to flow allowed (for semantic positioned merging) unless we have a clear reason not to.
+      // Keep stricter gating for paragraph construction to avoid destabilizing the flow pipeline.
+      region.flowAllowed = !rotationInRegion;
+
+      const minLinesForParagraphs = region.lines.length >= 2;
       const stableLineHeights = this.isStableLineHeight(region.lines);
       const stableIndent = this.isStableIndent(region.lines);
+      const buildParagraphs = !rotationInRegion && !overlap && minLinesForParagraphs && stableLineHeights && stableIndent;
 
-      region.flowAllowed = !rotationInRegion && !overlap && minLinesForFlow && stableLineHeights && stableIndent;
-      region.paragraphs = region.flowAllowed
-        ? this.buildParagraphs(region)
-        : [];
+      region.paragraphs = buildParagraphs ? this.buildParagraphs(region) : [];
     }
 
     return {
@@ -358,6 +384,9 @@ export class RegionLayoutAnalyzer {
       return nonEmpty.every((t) => /^[\u2018\u2019\u201C\u201D'"`.,;:!?()[\]{}]+$/.test((t.text || '').trim()));
     };
 
+    const isOpeningPunctText = (s: string): boolean => /^(?:[\u2018\u201C'"`({]|\[)+$/.test((s || '').trim());
+    const isClosingPunctText = (s: string): boolean => /^(?:[\u2019\u201D'"`.,;:!?)}\]]|\])+$/u.test((s || '').trim());
+
     const lineXSpan = (line: (typeof lines)[number]): { minX: number; maxX: number } => {
       const xs = line.items.map((t) => t.x);
       const x2 = line.items.map((t) => t.x + t.width);
@@ -367,7 +396,7 @@ export class RegionLayoutAnalyzer {
       };
     };
 
-    const punctMergeTol = Math.max(4, medianHeight * 1.8);
+    const punctMergeTol = Math.max(6, medianHeight * 2.6);
     for (let i = 0; i < lines.length; i++) {
       const punctLine = lines[i];
       if (!punctLine || !isPunctOnlyLine(punctLine)) continue;
@@ -388,9 +417,16 @@ export class RegionLayoutAnalyzer {
         if (dist > punctMergeTol) continue;
 
         const { minX: cMinX, maxX: cMaxX } = lineXSpan(candidate);
-        const margin = Math.max(12, medianHeight * 1.2);
+        const margin = Math.max(30, medianHeight * 2.5);
         const xOverlaps = pMaxX >= cMinX - margin && pMinX <= cMaxX + margin;
-        if (!xOverlaps) continue;
+
+        const punctText = punctLine.items.map((t) => (t.text || '').trim()).join('');
+        const attachByEdge =
+          (isOpeningPunctText(punctText) && Math.abs(pMinX - cMinX) <= margin) ||
+          (isClosingPunctText(punctText) && Math.abs(pMaxX - cMaxX) <= margin);
+
+        const xEligible = xOverlaps || attachByEdge;
+        if (!xEligible) continue;
 
         if (dist < bestDist) {
           bestDist = dist;

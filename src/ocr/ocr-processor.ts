@@ -103,7 +103,7 @@ export class OCRProcessor {
     return ImageConverter.convertToImageData(image);
   }
 
-  // @ts-ignore - Unused private method
+  // @ts-expect-error - Unused private method
   private async renderPageToImage(
     page: PDFPage
   ): Promise<ImageData> {

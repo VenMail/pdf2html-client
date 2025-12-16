@@ -54,6 +54,11 @@ export interface HTMLGenerationOptions {
     headingThreshold?: number;
     maxHeadingLength?: number;
   };
+  useFlexboxLayout?: boolean; // Use flexbox for semantic layout (default: true)
+  semanticPositionedLayout?: {
+    mergeSameStyleLines?: boolean;
+    whitespacePadding?: boolean;
+  };
 }
 
 export interface CSSOptions {

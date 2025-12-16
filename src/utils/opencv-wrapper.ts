@@ -42,7 +42,7 @@ export function getOpenCv(): Promise<typeof cv> {
 export async function ensureOpenCvReady(): Promise<typeof cv> {
   const cvModule = await getOpenCv();
   if (typeof window !== 'undefined') {
-    (window as any).cv = cvModule;
+    (window as unknown as { cv?: typeof cv }).cv = cvModule;
   }
   return cvModule;
 }

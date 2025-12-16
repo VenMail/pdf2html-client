@@ -1,18 +1,48 @@
 {
-  "timestamp": "2025-12-15T16:49:20.788Z",
+  "timestamp": "2025-12-15T21:42:43.142Z",
   "summary": {
-    "total": 1,
+    "total": 6,
     "passed": 0,
-    "failed": 1,
+    "failed": 6,
     "skipped": 0,
-    "duration": 9272
+    "duration": 1944
   },
   "tests": [
     {
-      "title": "should match top area visual fidelity (semantic) >= 97% and keep bold/italics",
+      "title": "should convert boarding_pass.pdf with outline-flow (no absolute text spans) and high fidelity",
       "status": "failed",
-      "duration": 9272,
-      "error": "Error: Top area visual diff ratio should be under 3%\n\n\u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBeLessThan\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m)\u001b[22m\n\nExpected: < \u001b[32m0.03\u001b[39m\nReceived:   \u001b[31m0.1813039538322125\u001b[39m"
+      "duration": 334,
+      "error": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d"
+    },
+    {
+      "title": "should convert boarding_pass.pdf with v2 classifier (smoke)",
+      "status": "failed",
+      "duration": 313,
+      "error": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d"
+    },
+    {
+      "title": "should convert boarding_pass.pdf with high fidelity",
+      "status": "failed",
+      "duration": 321,
+      "error": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d"
+    },
+    {
+      "title": "should preserve layout structure for boarding pass",
+      "status": "failed",
+      "duration": 316,
+      "error": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d"
+    },
+    {
+      "title": "should extract semantic IMPORTANT NOTES as heading + 2-item list (flow mode)",
+      "status": "failed",
+      "duration": 316,
+      "error": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d"
+    },
+    {
+      "title": "should convert boarding_pass.pdf with semantic layout and high fidelity",
+      "status": "failed",
+      "duration": 344,
+      "error": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d"
     }
   ]
 }

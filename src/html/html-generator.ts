@@ -4,14 +4,15 @@ import type {
   CSSOptions,
   OutputMetadata
 } from '../types/output.js';
-import type { PDFDocument, PDFPage, PDFGraphicsContent, PDFFormContent, PDFAnnotation, PDFTextContent } from '../types/pdf.js';
-import type { FontMapping } from '../types/fonts.js';
+import type { PDFDocument, PDFPage, PDFGraphicsContent, PDFFormContent, PDFAnnotation, PDFTextContent, PDFFontMetrics } from '../types/pdf.js';
+import type { FontMapping, FontMetrics } from '../types/fonts.js';
 import { CSSGenerator } from './css-generator.js';
 import { LayoutEngine } from './layout-engine.js';
 import { RegionLayoutAnalyzer } from '../core/region-layout.js';
 import { SemanticHTMLGenerator } from './semantic-html-generator.js';
 import { normalizeFontName } from '../fonts/font-name-normalizer.js';
 import { adaptAbsoluteToFlex } from './layout-adapter.js';
+import { getDefaultFontMetricsResolver } from '../fonts/font-metrics-resolver.js';
 
 type LineToken =
   | { type: 'text'; text: string; sample: PDFTextContent }
@@ -26,7 +27,14 @@ export class HTMLGenerator {
   private extraCssRules: string[] = [];
   private flowStyleClassByKey: Map<string, string> = new Map();
   private absGapCssInjected: boolean = false;
-  private semRunCssInjected: boolean = false;
+
+  private static OUTLINE_LIST_MARKERS: Array<{ pattern: RegExp; listType: 'ul' | 'ol' }> = [
+    { pattern: /^[•●○■□◆◇▪▫]\s+/, listType: 'ul' },
+    { pattern: /^[-–—]\s+/, listType: 'ul' },
+    { pattern: /^\(?\d+[.)\]]\s+/, listType: 'ol' },
+    { pattern: /^\(?[A-Za-z][.)\]]\s+/, listType: 'ol' },
+    { pattern: /^\(?[ivxIVX]+[.)\]]\s+/, listType: 'ol' }
+  ];
 
   constructor(
     options: HTMLGenerationOptions,
@@ -125,11 +133,859 @@ export class HTMLGenerator {
     return parts.join('\n');
   }
 
+  private generatePositionedSemanticText(page: PDFPage, fontMappings: FontMapping[]): string {
+    return this.generateSemanticPositionedText(page, fontMappings);
+  }
+
   private generateSemanticPositionedText(page: PDFPage, fontMappings: FontMapping[]): string {
+    // Use flexbox layout if enabled, otherwise fall back to absolute positioning
+    if (this.options.useFlexboxLayout !== false) {
+      return this.generateFlexboxSemanticText(page, fontMappings);
+    }
+    return this.generateAbsoluteSemanticText(page, fontMappings);
+  }
+
+  /**
+   * Normalize coordinate to 3 decimal places (0.001px precision)
+   * Same precision as preserve fidelity pipeline
+   */
+  private normalizeCoord(value: number): number {
+    return Math.round(value * 1000) / 1000;
+  }
+
+  private normalizePdfFontMetrics(metrics: PDFFontMetrics): FontMetrics {
+    const m = metrics as unknown as Record<string, unknown>;
+    return {
+      ascent: Number(m.ascent ?? 0),
+      descent: Number(m.descent ?? 0),
+      capHeight: Number(m.capHeight ?? 0),
+      xHeight: Number(m.xHeight ?? 0),
+      averageWidth: Number(m.averageWidth ?? 0),
+      maxWidth: Number(m.maxWidth ?? 0),
+      unitsPerEm: 1000
+    };
+  }
+
+  /**
+   * Estimate text width if not provided by PDF
+   * Uses same approach as preserve layout pipeline
+   * Note: ImprovedTextMerger already calculates accurate widths, so this is mainly a fallback
+   */
+  private estimateTextWidth(run: PDFTextContent): number {
+    // Priority 1: Use actual PDF width if available (most accurate)
+    // ImprovedTextMerger already calculates this from PDF coordinates
+    if (run.width && run.width > 0) {
+      return run.width;
+    }
+    
+    // Priority 2: Use font metrics resolver if font info is available
+    if (run.fontInfo) {
+      try {
+        const resolver = getDefaultFontMetricsResolver();
+        const match = resolver.resolveDetectedFont({
+          name: run.fontInfo.name,
+          family: run.fontFamily || run.fontInfo.name,
+          weight: run.fontWeight || 400,
+          style: run.fontStyle || 'normal',
+          embedded: run.fontInfo.embedded || false,
+          metrics: this.normalizePdfFontMetrics(run.fontInfo.metrics),
+          encoding: run.fontInfo.encoding
+        });
+        
+        const fontSize = run.fontSize || 12;
+        const text = run.text || '';
+        let totalWidth = 0;
+        
+        for (let i = 0; i < text.length; i++) {
+          const ch = text[i]!;
+          const charWidth = resolver.estimateCharWidthPx(ch, match.record, fontSize);
+          totalWidth += charWidth;
+        }
+        
+        if (totalWidth > 0) {
+          return totalWidth;
+        }
+      } catch (error) {
+        // Fall through to heuristic if font metrics fail
+      }
+    }
+    
+    // Priority 3: Fallback heuristic - improved calculation
+    const fontSize = run.fontSize || 12;
+    const text = (run.text || '').trim();
+    
+    if (text.length === 0) return 0;
+    
+    // Improved heuristic: account for different character types
+    // Numbers and uppercase are wider, lowercase and punctuation are narrower
+    let estimatedWidth = 0;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]!;
+      let charWidthFactor = 0.55; // Default for lowercase
+      
+      if (/[0-9]/.test(ch)) {
+        charWidthFactor = 0.52; // Numbers slightly narrower
+      } else if (/[A-Z]/.test(ch)) {
+        charWidthFactor = 0.58; // Uppercase wider
+      } else if (/[a-z]/.test(ch)) {
+        charWidthFactor = 0.55; // Lowercase
+      } else if (/[,.;:!?'"()]/.test(ch)) {
+        charWidthFactor = 0.30; // Punctuation much narrower
+      } else if (ch === ' ') {
+        charWidthFactor = 0.30; // Spaces narrower
+      } else if (/[iIlL1|]/.test(ch)) {
+        charWidthFactor = 0.25; // Narrow characters
+      } else if (/[mwMW]/.test(ch)) {
+        charWidthFactor = 0.75; // Wide characters
+      }
+      
+      estimatedWidth += fontSize * charWidthFactor;
+    }
+    
+    return Math.max(1, estimatedWidth);
+  }
+
+  /**
+   * Calculate visual height for text element
+   * Uses same approach as preserve layout pipeline
+   */
+  private calculateVisualHeight(run: PDFTextContent, absLineHeightFactor: number): number {
+    const fontSize = run.fontSize || 12;
+    const pdfHeight = run.height || 0;
+    const calculatedHeight = fontSize * absLineHeightFactor;
+    return Math.max(pdfHeight, calculatedHeight);
+  }
+
+  /**
+   * Detect nearby whitespace around a text run and calculate padding
+   * This helps prevent cramped text by adding breathing room
+   * Uses intelligent detection based on gap size, font metrics, and text context
+   */
+  private detectWhitespacePadding(
+    run: PDFTextContent,
+    prevRun: PDFTextContent | null,
+    nextRun: PDFTextContent | null,
+    fontSize: number
+  ): { paddingLeft: number; paddingRight: number; widthAdjustment: number } {
+    let paddingLeft = 0;
+    let paddingRight = 0;
+    let widthAdjustment = 0;
+
+    if (this.options.semanticPositionedLayout?.whitespacePadding === false) {
+      return { paddingLeft, paddingRight, widthAdjustment };
+    }
+
+    const firstNonSpace = (s: string): string => {
+      const m = s.match(/\S/u);
+      return m ? m[0]! : '';
+    };
+    const lastNonSpace = (s: string): string => {
+      const m = s.match(/\S(?=\s*$)/u);
+      return m ? m[0]! : '';
+    };
+    const isAlphaNum = (ch: string): boolean => /[\p{L}\p{N}]/u.test(ch);
+    const isOpener = (ch: string): boolean => /[([{"'\u2018\u201C]/u.test(ch);
+    const isCloser = (ch: string): boolean => /[)\]}"'\u2019\u201D]/u.test(ch);
+    const isTightPunct = (ch: string): boolean => /[,.;:!?]/u.test(ch);
+
+    const text = (run.text || '').trim();
+    const textLength = text.length;
+
+    // Detect whitespace before this run
+    if (prevRun) {
+      const gapBefore = run.x - (prevRun.x + prevRun.width);
+      const prevText = (prevRun.text || '').trim();
+      const prevFontSize = prevRun.fontSize || fontSize;
+      const combinedFontSize = Math.max(1, (prevFontSize + fontSize) / 2);
+      
+      // Calculate character width estimate for gap analysis
+      const estimatedCharWidth = combinedFontSize * 0.55;
+      const gapByChar = gapBefore / Math.max(0.01, estimatedCharWidth);
+      
+      // Small gaps (< 0.4 * fontSize) are often visual whitespace within words/phrases
+      // Medium gaps (0.4-0.7 * fontSize) might be tight word spacing that needs padding
+      if (gapBefore > 0) {
+        if (gapBefore < combinedFontSize * 0.25) {
+          // Very small gap - likely part of visual text area, add padding
+          paddingLeft = Math.min(gapBefore * 0.6, combinedFontSize * 0.12);
+        } else if (gapBefore < combinedFontSize * 0.5 && gapByChar < 0.5) {
+          // Small gap that's less than half a character - add moderate padding
+          paddingLeft = Math.min(gapBefore * 0.4, combinedFontSize * 0.08);
+        } else if (gapBefore < combinedFontSize * 0.7 && gapByChar < 0.7) {
+          // Medium gap - might need slight padding for visual breathing room
+          // Only if it's not clearly a word break
+          const isWordBreak = gapByChar >= 0.85 || 
+            (/[A-Za-z]$/.test(prevText) && /^[A-Z]/.test(text)) ||
+            (/[a-z]$/.test(prevText) && /^[A-Z]/.test(text));
+          if (!isWordBreak) {
+            paddingLeft = Math.min(gapBefore * 0.2, combinedFontSize * 0.05);
+          }
+        }
+        
+        paddingLeft = this.normalizeCoord(paddingLeft);
+      }
+
+      const prevEnd = lastNonSpace(prevRun.text || '');
+      const curStart = firstNonSpace(run.text || '');
+      const tight =
+        (isOpener(prevEnd) && isAlphaNum(curStart)) ||
+        (prevEnd === '-' && isAlphaNum(curStart)) ||
+        (isAlphaNum(prevEnd) && (isCloser(curStart) || isTightPunct(curStart))) ||
+        (isOpener(prevEnd) && (isCloser(curStart) || isTightPunct(curStart)));
+      if (tight) paddingLeft = 0;
+    }
+
+    // Detect whitespace after this run
+    if (nextRun) {
+      const gapAfter = nextRun.x - (run.x + run.width);
+      const nextText = (nextRun.text || '').trim();
+      const nextFontSize = nextRun.fontSize || fontSize;
+      const combinedFontSize = Math.max(1, (fontSize + nextFontSize) / 2);
+      
+      // Calculate character width estimate for gap analysis
+      const estimatedCharWidth = combinedFontSize * 0.55;
+      const gapByChar = gapAfter / Math.max(0.01, estimatedCharWidth);
+      
+      // Similar logic for trailing whitespace
+      if (gapAfter > 0) {
+        if (gapAfter < combinedFontSize * 0.25) {
+          // Very small gap - likely part of visual text area
+          paddingRight = Math.min(gapAfter * 0.6, combinedFontSize * 0.12);
+        } else if (gapAfter < combinedFontSize * 0.5 && gapByChar < 0.5) {
+          // Small gap
+          paddingRight = Math.min(gapAfter * 0.4, combinedFontSize * 0.08);
+        } else if (gapAfter < combinedFontSize * 0.7 && gapByChar < 0.7) {
+          // Medium gap - check if it's a word break
+          const isWordBreak = gapByChar >= 0.85 ||
+            (/[A-Za-z]$/.test(text) && /^[A-Z]/.test(nextText)) ||
+            (/[a-z]$/.test(text) && /^[A-Z]/.test(nextText)) ||
+            /^[,.;:!?)]/.test(nextText);
+          if (!isWordBreak) {
+            paddingRight = Math.min(gapAfter * 0.2, combinedFontSize * 0.05);
+          }
+        }
+        
+        paddingRight = this.normalizeCoord(paddingRight);
+      }
+
+      const curEnd = lastNonSpace(run.text || '');
+      const nextStart = firstNonSpace(nextRun.text || '');
+      const tight =
+        (isOpener(curEnd) && isAlphaNum(nextStart)) ||
+        (curEnd === '-' && isAlphaNum(nextStart)) ||
+        (isAlphaNum(curEnd) && (isCloser(nextStart) || isTightPunct(nextStart))) ||
+        (isOpener(curEnd) && (isCloser(nextStart) || isTightPunct(nextStart)));
+      if (tight) paddingRight = 0;
+    }
+
+    // If run width seems too narrow compared to text content, add small width adjustment
+    // This helps with cramped rendering, especially for runs with missing width data
+    if (textLength > 0) {
+      if (run.width && run.width > 0) {
+        // Use font metrics if available for better estimation
+        let estimatedMinWidth = 0;
+        try {
+          const resolver = getDefaultFontMetricsResolver();
+          if (run.fontInfo) {
+            const match = resolver.resolveDetectedFont({
+              name: run.fontInfo.name,
+              family: run.fontFamily || run.fontInfo.name,
+              weight: run.fontWeight || 400,
+              style: run.fontStyle || 'normal',
+              embedded: run.fontInfo.embedded || false,
+              metrics: this.normalizePdfFontMetrics(run.fontInfo.metrics),
+              encoding: run.fontInfo.encoding
+            });
+            
+            for (let i = 0; i < text.length; i++) {
+              const ch = text[i]!;
+              estimatedMinWidth += resolver.estimateCharWidthPx(ch, match.record, fontSize);
+            }
+          }
+        } catch {
+          // Fall through to heuristic
+        }
+        
+        // Fallback to heuristic if font metrics not available
+        if (estimatedMinWidth === 0) {
+          estimatedMinWidth = textLength * fontSize * 0.45; // Conservative estimate
+        }
+        
+        // If actual width is significantly less than estimated, add adjustment
+        if (run.width < estimatedMinWidth * 0.9) {
+          widthAdjustment = Math.min((estimatedMinWidth - run.width) * 0.3, fontSize * 0.15);
+          widthAdjustment = this.normalizeCoord(widthAdjustment);
+        }
+      } else {
+        // No width data - add small adjustment to prevent cramped text
+        widthAdjustment = Math.min(fontSize * 0.08, 2);
+        widthAdjustment = this.normalizeCoord(widthAdjustment);
+      }
+    }
+
+    return { paddingLeft, paddingRight, widthAdjustment };
+  }
+
+  private generateFlexboxSemanticText(page: PDFPage, fontMappings: FontMapping[]): string {
     const analysis = this.regionLayoutAnalyzer.analyze(page);
-    const passes = this.options.textLayoutPasses ?? 1;
     const absLineHeightFactor = this.options.layoutTuning?.absLineHeightFactor ?? 1.25;
-    const absRunLineHeightFactor = this.options.layoutTuning?.absRunLineHeightFactor ?? 1.15;
+    const minGapPx = 0.5;
+    const mergeSameStyleLines = this.options.semanticPositionedLayout?.mergeSameStyleLines === true;
+
+    const getMergedRunsForLine = (line: (typeof analysis.regions)[number]['lines'][number]): PDFTextContent[] => {
+      return line.mergedRuns && line.mergedRuns.length > 0
+        ? line.mergedRuns.map((run): PDFTextContent => ({
+            text: run.text,
+            x: run.x,
+            y: run.y,
+            width: run.width,
+            height: run.height,
+            fontSize: run.fontSize,
+            fontFamily: run.fontFamily,
+            fontWeight: run.fontWeight,
+            fontStyle: run.fontStyle,
+            color: run.color,
+            rotation: run.rotation,
+            fontInfo: undefined
+          }))
+        : this.mergeTextRuns(line.items);
+    };
+
+    const html: string[] = [];
+
+    for (const region of analysis.regions) {
+      // Normalize region dimensions (round to 3 decimal places for precision)
+      // Same normalization approach as preserve fidelity pipeline
+      const regionLeft = this.normalizeCoord(region.rect.left);
+      const regionTop = this.normalizeCoord(region.rect.top);
+      const regionWidth = Math.max(0, this.normalizeCoord(region.rect.width));
+      const regionHeight = Math.max(0, this.normalizeCoord(region.rect.height));
+
+      // Region container (absolute positioned on page)
+      html.push(
+        `<div class="pdf-sem-region" style="position: absolute; left: ${regionLeft}px; top: ${regionTop}px; width: ${regionWidth}px; height: ${regionHeight}px;" data-x="${regionLeft}" data-top="${regionTop}" data-width="${regionWidth}" data-height="${regionHeight}" data-flow="${region.flowAllowed ? '1' : '0'}">`
+      );
+
+      // Lines container (flexbox column)
+      html.push('<div class="pdf-sem-lines" style="display: flex; flex-direction: column; align-items: flex-start; gap: 0; width: 100%;">');
+
+      const renderFlexLine = (mergedRuns: PDFTextContent[], lineHeight: number): void => {
+        html.push(
+          `<div class="pdf-sem-line" style="display: flex; flex-direction: row; align-items: flex-start; gap: 0; width: 100%; position: relative; height: ${lineHeight}px; line-height: ${lineHeight}px;">`
+        );
+
+        let cursorX = 0;
+
+        for (let runIdx = 0; runIdx < mergedRuns.length; runIdx++) {
+          const run = mergedRuns[runIdx]!;
+          const prevRun = runIdx > 0 ? mergedRuns[runIdx - 1]! : null;
+          const nextRun = runIdx < mergedRuns.length - 1 ? mergedRuns[runIdx + 1]! : null;
+          const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+
+          const abs = this.layoutEngine.transformCoordinates(run.x, run.y, page.height, run.height);
+          const xRel = this.normalizeCoord(abs.x - regionLeft);
+
+          let runWidth = run.width && run.width > 0
+            ? run.width
+            : this.estimateTextWidth(run);
+
+          const fontSize = run.fontSize || 12;
+          const whitespace = this.detectWhitespacePadding(run, prevRun, nextRun, fontSize);
+          runWidth = Math.max(0, this.normalizeCoord(runWidth + whitespace.widthAdjustment));
+
+          const visualHeight = this.calculateVisualHeight(run, absLineHeightFactor);
+          const runHeight = Math.max(1, this.normalizeCoord(visualHeight));
+
+          const nextAbs = nextRun
+            ? this.layoutEngine.transformCoordinates(nextRun.x, nextRun.y, page.height, nextRun.height)
+            : null;
+          const nextXRel = nextAbs ? this.normalizeCoord(nextAbs.x - regionLeft) : null;
+
+          const widthBudget = nextXRel !== null
+            ? Math.max(0, this.normalizeCoord(nextXRel - xRel - whitespace.paddingLeft - whitespace.paddingRight - minGapPx))
+            : Math.max(0, this.normalizeCoord(regionWidth - xRel - whitespace.paddingLeft - whitespace.paddingRight));
+
+          const resolver = getDefaultFontMetricsResolver();
+          let measuredTextWidth = 0;
+          try {
+            if (run.fontInfo) {
+              const match = resolver.resolveDetectedFont({
+                name: run.fontInfo.name,
+                family: run.fontFamily || run.fontInfo.name,
+                weight: run.fontWeight || 400,
+                style: run.fontStyle || 'normal',
+                embedded: run.fontInfo.embedded || false,
+                metrics: this.normalizePdfFontMetrics(run.fontInfo.metrics),
+                encoding: run.fontInfo.encoding
+              });
+              const textToMeasure = run.text || '';
+              for (let i = 0; i < textToMeasure.length; i++) {
+                measuredTextWidth += resolver.estimateCharWidthPx(textToMeasure[i]!, match.record, fontSize);
+              }
+            }
+          } catch {
+            measuredTextWidth = 0;
+          }
+
+          const desiredRunWidth = this.normalizeCoord(Math.max(runWidth, measuredTextWidth));
+          const finalRunWidth = widthBudget > 0
+            ? Math.min(desiredRunWidth, widthBudget)
+            : desiredRunWidth;
+
+          const delta = this.normalizeCoord(xRel - cursorX - whitespace.paddingLeft);
+
+          const styleParts: string[] = [
+            'position: relative',
+            `width: ${finalRunWidth}px`,
+            `height: ${runHeight}px`,
+            'flex-shrink: 0',
+            'display: inline-block',
+            `line-height: ${runHeight}px`,
+            'white-space: pre',
+            'overflow: visible'
+          ];
+
+          if (Math.abs(delta) > minGapPx) {
+            styleParts.push(`margin-left: ${delta}px`);
+          }
+
+          if (whitespace.paddingLeft > 0) {
+            styleParts.push(`padding-left: ${whitespace.paddingLeft}px`);
+          }
+          if (whitespace.paddingRight > 0) {
+            styleParts.push(`padding-right: ${whitespace.paddingRight}px`);
+          }
+
+          const textHtml = this.layoutEngine.generateInlineTextSpan(run, fontClass);
+          html.push(
+            `<span class="pdf-sem-text" style="${styleParts.join('; ')}">${textHtml}</span>`
+          );
+
+          cursorX = Math.max(cursorX, xRel + finalRunWidth + whitespace.paddingLeft + whitespace.paddingRight);
+        }
+
+        html.push('</div>');
+      };
+
+      const orderedLines = [...region.lines].sort((a, b) => {
+        const yDiff = a.rect.top - b.rect.top;
+        if (Math.abs(yDiff) > 0.5) return yDiff;
+        return a.minX - b.minX;
+      });
+
+      let prevLineBottomRel: number | null = null;
+
+      const regionLooksStructured = mergeSameStyleLines && orderedLines.some((line) => {
+        const runs = line.items.filter((r) => (r.text || '').trim().length > 0);
+        if (runs.length < 2) return false;
+        const sorted = [...runs].sort((a, b) => a.x - b.x);
+        const styleKeys = sorted.map((r) => [r.fontFamily, r.fontSize, r.fontWeight, r.fontStyle, r.color].join('|'));
+        const uniformStyle = styleKeys.length > 0 && styleKeys.every((k) => k === styleKeys[0]);
+        if (!uniformStyle) return false;
+
+        for (let i = 0; i < sorted.length - 1; i++) {
+          const cur = sorted[i]!;
+          const next = sorted[i + 1]!;
+          const curWidth = typeof cur.width === 'number' && Number.isFinite(cur.width) && cur.width > 0 ? cur.width : this.estimateTextWidth(cur);
+          const gap = next.x - (cur.x + curWidth);
+          const fontSize = (typeof cur.fontSize === 'number' && Number.isFinite(cur.fontSize) && cur.fontSize > 0) ? cur.fontSize : 12;
+          const gapThreshold = Math.max(18, fontSize * 2.75, regionWidth * 0.06);
+          if (gap >= gapThreshold) return true;
+        }
+        return false;
+      });
+
+      if (mergeSameStyleLines && region.flowAllowed && !regionLooksStructured) {
+        type MergeGroup = {
+          xRel: number;
+          width: number;
+          runHeight: number;
+          reservedHeight: number;
+          lineTopRel: number;
+          segments: Array<
+            | { kind: 'space' }
+            | { kind: 'run'; run: PDFTextContent; fontClass: string; text: string }
+          >;
+        };
+
+        const ensureJoined = (
+          target: MergeGroup['segments'],
+          nextRun: PDFTextContent,
+          nextFontClass: string,
+          nextTextRaw: string
+        ): void => {
+          const nextText = (nextTextRaw || '').replace(/^\s+/u, '');
+          if (!nextText.trim()) return;
+
+          const lastIdx = (() => {
+            for (let i = target.length - 1; i >= 0; i--) {
+              if (target[i]?.kind === 'run') return i;
+            }
+            return -1;
+          })();
+
+          if (lastIdx < 0) {
+            target.push({ kind: 'run', run: nextRun, fontClass: nextFontClass, text: nextText.replace(/^\s+/u, '') });
+            return;
+          }
+
+          const last = target[lastIdx] as Extract<MergeGroup['segments'][number], { kind: 'run' }>;
+          const prevTrim = (last.text || '').replace(/\s+$/u, '');
+          const nextTrim = nextText.replace(/^\s+/u, '');
+          if (!prevTrim) {
+            last.text = prevTrim;
+            target.push({ kind: 'run', run: nextRun, fontClass: nextFontClass, text: nextTrim });
+            return;
+          }
+          if (!nextTrim) {
+            last.text = prevTrim;
+            return;
+          }
+
+          const prevEnd = prevTrim.slice(-1);
+          const nextStart = nextTrim.slice(0, 1);
+          let glue = ' ';
+
+          const lastRunText = (last.run?.text || '') as string;
+          const explicitSpace = /\s$/u.test(lastRunText) || /^\s/u.test(nextTextRaw || '');
+          const lastRunWidth =
+            typeof last.run.width === 'number' && Number.isFinite(last.run.width) && last.run.width > 0
+              ? last.run.width
+              : this.estimateTextWidth(last.run);
+          const gap = nextRun.x - (last.run.x + lastRunWidth);
+          const lastFontSize = (typeof last.run.fontSize === 'number' && Number.isFinite(last.run.fontSize) && last.run.fontSize > 0)
+            ? last.run.fontSize
+            : 12;
+          const nextFontSize = (typeof nextRun.fontSize === 'number' && Number.isFinite(nextRun.fontSize) && nextRun.fontSize > 0)
+            ? nextRun.fontSize
+            : lastFontSize;
+          const avgFontSize = (lastFontSize + nextFontSize) / 2;
+          const tightGap = Math.max(0.0, avgFontSize * 0.12);
+          const spaceGap = Math.max(0.6, avgFontSize * 0.28);
+
+          if (prevEnd === '-') {
+            last.text = prevTrim.slice(0, -1);
+            glue = '';
+          } else {
+            last.text = prevTrim;
+            if (/[([{"'\u2018\u201C]/u.test(prevEnd)) {
+              glue = '';
+            } else if (/[)\]}"'\u2019\u201D,.;:!?]/u.test(nextStart)) {
+              glue = '';
+            }
+          }
+
+          if (glue) {
+            if (Number.isFinite(gap) && gap <= tightGap) {
+              glue = '';
+            } else if (explicitSpace) {
+              glue = ' ';
+            } else if (Number.isFinite(gap) && gap >= spaceGap) {
+              glue = ' ';
+            } else {
+              const prevIsWord = /[\p{L}\p{N}]$/u.test(prevTrim);
+              const nextIsWord = /^[\p{L}\p{N}]/u.test(nextTrim);
+              glue = prevIsWord && nextIsWord ? ' ' : '';
+            }
+          }
+
+          if (glue) target.push({ kind: 'space' });
+          target.push({ kind: 'run', run: nextRun, fontClass: nextFontClass, text: nextTrim });
+        };
+
+        const buildSegmentsForRuns = (runs: PDFTextContent[]): MergeGroup['segments'] => {
+          const out: MergeGroup['segments'] = [];
+          const sorted = [...runs].sort((a, b) => a.x - b.x);
+          for (const r of sorted) {
+            const t = r.text || '';
+            if (!t.trim()) continue;
+            const fc = this.getFontClass(r.fontFamily, fontMappings);
+            ensureJoined(out, r, fc, t);
+          }
+          return out;
+        };
+
+        const flush = (g: MergeGroup | null): void => {
+          if (!g) return;
+          const styleParts: string[] = [
+            'display: block',
+            `margin-left: ${g.xRel}px`,
+            `width: ${g.width}px`,
+            `max-width: ${g.width}px`,
+            `min-height: ${g.reservedHeight}px`,
+            `line-height: ${g.runHeight}px`,
+            'white-space: normal',
+            'overflow-wrap: anywhere',
+            'word-break: break-word',
+            'hyphens: auto',
+            'overflow: visible'
+          ];
+          const inner = g.segments.map((s) => {
+            if (s.kind === 'space') return ' ';
+            const textRun: PDFTextContent = { ...s.run, text: s.text };
+            return this.layoutEngine.generateInlineTextSpan(textRun, s.fontClass);
+          }).join('');
+          html.push(`<div class="pdf-sem-paragraph" style="${styleParts.join('; ')}">${inner}</div>`);
+        };
+
+        let group: MergeGroup | null = null;
+
+        const lineLooksStructured = (line: (typeof orderedLines)[number]): boolean => {
+          const runs = line.items.filter((r) => (r.text || '').trim().length > 0);
+          if (runs.length < 2) return false;
+          const sorted = [...runs].sort((a, b) => a.x - b.x);
+          for (let i = 0; i < sorted.length - 1; i++) {
+            const cur = sorted[i]!;
+            const next = sorted[i + 1]!;
+            const curWidth = typeof cur.width === 'number' && Number.isFinite(cur.width) && cur.width > 0 ? cur.width : this.estimateTextWidth(cur);
+            const gap = next.x - (cur.x + curWidth);
+            const fontSize = (typeof cur.fontSize === 'number' && Number.isFinite(cur.fontSize) && cur.fontSize > 0) ? cur.fontSize : 12;
+            const gapThreshold = Math.max(18, fontSize * 2.75, regionWidth * 0.06);
+            if (gap >= gapThreshold) return true;
+          }
+          return false;
+        };
+
+        for (let lineIdx = 0; lineIdx < orderedLines.length; lineIdx++) {
+          const line = orderedLines[lineIdx]!;
+          const mergedRuns: PDFTextContent[] = getMergedRunsForLine(line);
+
+          const lineTopRel = this.normalizeCoord(line.rect.top - regionTop);
+          const lineHeight = Math.max(
+            1,
+            this.normalizeCoord(
+              Math.max(
+                line.rect.height,
+                (typeof line.avgFontSize === 'number' && Number.isFinite(line.avgFontSize) && line.avgFontSize > 0
+                  ? line.avgFontSize
+                  : 12) * absLineHeightFactor
+              )
+            )
+          );
+
+          if (lineIdx > 0 && prevLineBottomRel !== null) {
+            const vGap = this.normalizeCoord(lineTopRel - prevLineBottomRel);
+            if (vGap > minGapPx) {
+              flush(group);
+              group = null;
+              html.push(`<div class="pdf-sem-vgap" style="height: ${vGap}px; flex-shrink: 0; width: 100%;"></div>`);
+            }
+          }
+
+          if (mergedRuns.length === 0 || !mergedRuns.some((r) => (r.text || '').trim().length > 0) || lineLooksStructured(line)) {
+            flush(group);
+            group = null;
+            if (mergedRuns.length > 0) {
+              renderFlexLine(mergedRuns, lineHeight);
+            }
+            prevLineBottomRel = this.normalizeCoord(lineTopRel + lineHeight);
+            continue;
+          }
+
+          const representative = [...mergedRuns].sort((a, b) => a.x - b.x)[0]!;
+          const abs = this.layoutEngine.transformCoordinates(representative.x, representative.y, page.height, representative.height);
+          const xRel = this.normalizeCoord(abs.x - regionLeft);
+          const runHeight = Math.max(1, this.normalizeCoord(this.calculateVisualHeight(representative, absLineHeightFactor)));
+          const width = Math.max(0, this.normalizeCoord(regionWidth - xRel));
+
+          const lineSegments = buildSegmentsForRuns(mergedRuns);
+          const hasTextSegments = lineSegments.some((s) => s.kind === 'run' && (s.text || '').trim().length > 0);
+          if (!hasTextSegments) {
+            flush(group);
+            group = null;
+            renderFlexLine(mergedRuns, lineHeight);
+            prevLineBottomRel = this.normalizeCoord(lineTopRel + lineHeight);
+            continue;
+          }
+
+          const canMergeWithPrev = group !== null && Math.abs(group.xRel - xRel) <= 1.5;
+
+          if (!canMergeWithPrev) {
+            flush(group);
+            group = {
+              xRel,
+              width,
+              runHeight,
+              reservedHeight: lineHeight,
+              lineTopRel,
+              segments: lineSegments
+            };
+          } else {
+            group!.runHeight = Math.max(group!.runHeight, runHeight);
+            group!.reservedHeight = this.normalizeCoord(group!.reservedHeight + lineHeight);
+            for (const seg of lineSegments) {
+              if (seg.kind === 'space') {
+                group!.segments.push(seg);
+              } else {
+                ensureJoined(group!.segments, seg.run, seg.fontClass, seg.text);
+              }
+            }
+          }
+
+          prevLineBottomRel = this.normalizeCoord(lineTopRel + lineHeight);
+        }
+
+        flush(group);
+
+        html.push('</div>'); // Close lines container
+        html.push('</div>'); // Close region container
+        continue;
+      }
+
+      for (let lineIdx = 0; lineIdx < orderedLines.length; lineIdx++) {
+        const line = orderedLines[lineIdx]!;
+        // Use merged runs from analysis (already normalized and measured by ImprovedTextMerger)
+        // mergedRuns are TextRun[] which have the same structure as PDFTextContent
+        const mergedRuns: PDFTextContent[] = getMergedRunsForLine(line);
+
+        const lineTopRel = this.normalizeCoord(line.rect.top - regionTop);
+        const lineHeight = Math.max(
+          1,
+          this.normalizeCoord(
+            Math.max(
+              line.rect.height,
+              (typeof line.avgFontSize === 'number' && Number.isFinite(line.avgFontSize) && line.avgFontSize > 0
+                ? line.avgFontSize
+                : 12) * absLineHeightFactor
+            )
+          )
+        );
+
+        // Calculate vertical gap before this line (region-relative, already in HTML coordinates)
+        if (lineIdx > 0 && prevLineBottomRel !== null) {
+          const vGap = this.normalizeCoord(lineTopRel - prevLineBottomRel);
+          if (vGap > minGapPx) {
+            html.push(`<div class="pdf-sem-vgap" style="height: ${vGap}px; flex-shrink: 0; width: 100%;"></div>`);
+          }
+        }
+
+        // Line container (flexbox row)
+        html.push(
+          `<div class="pdf-sem-line" style="display: flex; flex-direction: row; align-items: flex-start; gap: 0; width: 100%; position: relative; height: ${lineHeight}px; line-height: ${lineHeight}px;">`
+        );
+
+        let cursorX = 0;
+
+        for (let runIdx = 0; runIdx < mergedRuns.length; runIdx++) {
+          const run = mergedRuns[runIdx]!;
+          const prevRun = runIdx > 0 ? mergedRuns[runIdx - 1]! : null;
+          const nextRun = runIdx < mergedRuns.length - 1 ? mergedRuns[runIdx + 1]! : null;
+          const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+          
+          // Transform PDF coordinates to HTML coordinates (same as preserve fidelity)
+          const abs = this.layoutEngine.transformCoordinates(run.x, run.y, page.height, run.height);
+          
+          // Calculate relative position within region (normalized to 3 decimal places)
+          const xRel = this.normalizeCoord(abs.x - regionLeft);
+
+          // Use actual PDF measurements (normalized to 3 decimal places)
+          // Width: Prioritize actual PDF width from merged run (most accurate)
+          // ImprovedTextMerger already calculates accurate widths from PDF coordinates
+          // Only estimate if width is missing or invalid
+          let runWidth = run.width && run.width > 0 
+            ? run.width 
+            : this.estimateTextWidth(run);
+          
+          // Detect nearby whitespace and calculate padding for better visual spacing
+          const fontSize = run.fontSize || 12;
+          const whitespace = this.detectWhitespacePadding(run, prevRun, nextRun, fontSize);
+          
+          // Adjust width to include detected whitespace padding
+          runWidth = Math.max(0, this.normalizeCoord(runWidth + whitespace.widthAdjustment));
+          
+          // Height: Use actual PDF height or calculated from font size (same as preserve fidelity)
+          const visualHeight = this.calculateVisualHeight(run, absLineHeightFactor);
+          const runHeight = Math.max(1, this.normalizeCoord(visualHeight));
+
+          const nextAbs = nextRun
+            ? this.layoutEngine.transformCoordinates(nextRun.x, nextRun.y, page.height, nextRun.height)
+            : null;
+          const nextXRel = nextAbs ? this.normalizeCoord(nextAbs.x - regionLeft) : null;
+
+          // Build style with padding if detected
+          // Compute width budget (avoid overlaps) and allow expansion when safe
+          const widthBudget = nextXRel !== null
+            ? Math.max(0, this.normalizeCoord(nextXRel - xRel - whitespace.paddingLeft - whitespace.paddingRight - minGapPx))
+            : Math.max(0, this.normalizeCoord(regionWidth - xRel - whitespace.paddingLeft - whitespace.paddingRight));
+
+          const resolver = getDefaultFontMetricsResolver();
+          let measuredTextWidth = 0;
+          try {
+            if (run.fontInfo) {
+              const match = resolver.resolveDetectedFont({
+                name: run.fontInfo.name,
+                family: run.fontFamily || run.fontInfo.name,
+                weight: run.fontWeight || 400,
+                style: run.fontStyle || 'normal',
+                embedded: run.fontInfo.embedded || false,
+                metrics: this.normalizePdfFontMetrics(run.fontInfo.metrics),
+                encoding: run.fontInfo.encoding
+              });
+              const textToMeasure = run.text || '';
+              for (let i = 0; i < textToMeasure.length; i++) {
+                measuredTextWidth += resolver.estimateCharWidthPx(textToMeasure[i]!, match.record, fontSize);
+              }
+            }
+          } catch {
+            measuredTextWidth = 0;
+          }
+
+          const desiredRunWidth = this.normalizeCoord(Math.max(runWidth, measuredTextWidth));
+          const finalRunWidth = widthBudget > 0
+            ? Math.min(desiredRunWidth, widthBudget)
+            : desiredRunWidth;
+
+          // Compute relative delta to requested x position; allow negative deltas via margin-left
+          const delta = this.normalizeCoord(xRel - cursorX - whitespace.paddingLeft);
+
+          const styleParts: string[] = [
+            'position: relative',
+            `width: ${finalRunWidth}px`,
+            `height: ${runHeight}px`,
+            'flex-shrink: 0',
+            'display: inline-block',
+            `line-height: ${runHeight}px`,
+            'white-space: pre',
+            'overflow: visible'
+          ];
+
+          if (Math.abs(delta) > minGapPx) {
+            styleParts.push(`margin-left: ${delta}px`);
+          }
+          
+          if (whitespace.paddingLeft > 0) {
+            styleParts.push(`padding-left: ${whitespace.paddingLeft}px`);
+          }
+          if (whitespace.paddingRight > 0) {
+            styleParts.push(`padding-right: ${whitespace.paddingRight}px`);
+          }
+
+          // Generate text element with relative positioning and exact dimensions
+          const textHtml = this.layoutEngine.generateInlineTextSpan(run, fontClass);
+          html.push(
+            `<span class="pdf-sem-text" style="${styleParts.join('; ')}">${textHtml}</span>`
+          );
+
+          // Update cursor using actual run end position (xRel + runWidth + padding)
+          // This ensures accurate positioning for next run
+          cursorX = Math.max(cursorX, xRel + finalRunWidth + whitespace.paddingLeft + whitespace.paddingRight);
+        }
+
+        html.push('</div>'); // Close line container
+
+        prevLineBottomRel = this.normalizeCoord(lineTopRel + lineHeight);
+      }
+
+      html.push('</div>'); // Close lines container
+      html.push('</div>'); // Close region container
+    }
+
+    return html.join('\n');
+  }
+
+  private generateAbsoluteSemanticText(page: PDFPage, fontMappings: FontMapping[]): string {
+    const analysis = this.regionLayoutAnalyzer.analyze(page);
+    const absLineHeightFactor = this.options.layoutTuning?.absLineHeightFactor ?? 1.25;
 
     const html: string[] = [];
 
@@ -149,103 +1005,35 @@ export class HTMLGenerator {
 
       for (const line of orderedLines) {
         const mergedRuns = this.mergeTextRuns(line.items);
+        const lineTop = Math.max(0, Math.round((line.rect.top - region.rect.top) * 1000) / 1000);
 
-        const alphaNumRuns = mergedRuns.filter((t) => /[A-Za-z0-9]/.test(t.text));
-        const refRuns = alphaNumRuns.length > 0 ? alphaNumRuns : mergedRuns;
-        const refTopPdf = Math.max(...refRuns.map((t) => t.y + t.height));
-        const refTop = page.height - refTopPdf;
-
-        const fallbackLineTop = Math.max(0, Math.round((line.rect.top - region.rect.top) * 1000) / 1000);
-        const anchoredLineTop = Math.max(0, Math.round((refTop - region.rect.top) * 1000) / 1000);
+        const avgFontSize =
+          typeof line.avgFontSize === 'number' && Number.isFinite(line.avgFontSize) && line.avgFontSize > 0
+            ? line.avgFontSize
+            : (line.items.length > 0
+              ? (line.items.reduce((sum, t) => sum + (Number.isFinite(t.fontSize) ? t.fontSize : 0), 0) / Math.max(1, line.items.length))
+              : 0);
 
         const lineHeight = Math.max(
           1,
-          Math.round(Math.max(line.rect.height, (line.avgFontSize || 0) * absLineHeightFactor) * 1000) / 1000
+          Math.round(Math.max(line.rect.height, avgFontSize * absLineHeightFactor) * 1000) / 1000
         );
 
-        const canRelativeRebuild =
-          passes >= 2 &&
-          !line.hasRotation &&
-          (() => {
-            if (mergedRuns.length <= 1) return false;
-            const fs = mergedRuns.map((t) => t.fontSize);
-            const minFs = Math.min(...fs);
-            const maxFs = Math.max(...fs);
-            if (maxFs - minFs > 1.75) return false;
+        html.push(
+          `<div class="pdf-sem-line" style="position: absolute; left: 0; top: ${lineTop}px; width: ${width}px; height: ${lineHeight}px;">`
+        );
 
-            const ys = (alphaNumRuns.length > 0 ? alphaNumRuns : mergedRuns).map((t) => t.y + t.height);
-            const ySpread = Math.max(...ys) - Math.min(...ys);
-            const yTol = Math.max(1.5, Math.min(lineHeight, ((minFs + maxFs) / 2) * 0.35));
-            if (ySpread > yTol) return false;
-
-            let overlaps = 0;
-            let cursor = -Infinity;
-            for (const run of mergedRuns) {
-              const start = run.x;
-              if (Number.isFinite(cursor) && start < cursor - 0.75) overlaps++;
-              cursor = Math.max(cursor, start + Math.max(0, run.width));
-            }
-
-            return overlaps <= Math.max(0, Math.floor(mergedRuns.length / 5));
-          })();
-
-        if (canRelativeRebuild) {
-          if (!this.absGapCssInjected) {
-            this.extraCssRules.push('.pdf-abs-gap { display: inline-block; font-size: 0; line-height: 0; }');
-            this.absGapCssInjected = true;
-          }
-
-          if (!this.semRunCssInjected) {
-            this.extraCssRules.push('.pdf-sem-run { position: relative; display: inline-block; }');
-            this.semRunCssInjected = true;
-          }
-
-          html.push(
-            `<div class="pdf-sem-line" style="position: absolute; left: 0; top: ${anchoredLineTop}px; width: ${width}px; height: ${lineHeight}px; white-space: pre; line-height: ${lineHeight}px;">`
-          );
-
-          let cursorX = 0;
-          for (const run of mergedRuns) {
-            const fontClass = this.getFontClass(run.fontFamily, fontMappings);
-            const xRel = run.x - region.rect.left;
-            const gap = xRel - cursorX;
-            if (gap > 0.5) {
-              const w = Math.round(gap * 1000) / 1000;
-              html.push(`<span class="pdf-abs-gap" style="width: ${w}px"></span>`);
-            }
-
-            const abs = this.layoutEngine.transformCoordinates(run.x, run.y, page.height, run.height);
-            const yRel = Math.round((abs.y - refTop) * 1000) / 1000;
-            const runLineHeight = Math.max(1, Math.round(Math.max(run.height, run.fontSize * absRunLineHeightFactor)));
-            const runWidth = Math.max(0, Math.round(Math.max(0, run.width) * 1000) / 1000);
-
-            const inline = this.layoutEngine.generateInlineTextSpan(run, fontClass);
-            const runStyleParts: string[] = [`width: ${runWidth}px`, `line-height: ${runLineHeight}px`];
-            if (Math.abs(yRel) > 0.25) {
-              runStyleParts.unshift(`top: ${yRel}px`);
-            }
-            html.push(`<span class="pdf-sem-run" style="${runStyleParts.join('; ')};">${inline}</span>`);
-            cursorX = Math.max(cursorX, xRel + Math.max(0, run.width));
-          }
-
-          html.push('</div>');
-        } else {
-          html.push(
-            `<div class="pdf-sem-line" style="position: absolute; left: 0; top: ${fallbackLineTop}px; width: ${width}px; height: ${lineHeight}px;">`
-          );
-
-          for (const run of mergedRuns) {
-            const fontClass = this.getFontClass(run.fontFamily, fontMappings);
-            const abs = this.layoutEngine.transformCoordinates(run.x, run.y, page.height, run.height);
-            const rel = {
-              x: abs.x - region.rect.left,
-              y: abs.y - region.rect.top - fallbackLineTop
-            };
-            html.push(this.layoutEngine.generateTextElement(run, page.height, fontClass, { coordsOverride: rel }));
-          }
-
-          html.push('</div>');
+        for (const run of mergedRuns) {
+          const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+          const abs = this.layoutEngine.transformCoordinates(run.x, run.y, page.height, run.height);
+          const rel = {
+            x: abs.x - region.rect.left,
+            y: abs.y - region.rect.top - lineTop
+          };
+          html.push(this.layoutEngine.generateTextElement(run, page.height, fontClass, { coordsOverride: rel }));
         }
+
+        html.push('</div>');
       }
 
       html.push('</div>');
@@ -306,7 +1094,9 @@ export class HTMLGenerator {
     if (useSvgText) {
       parts.push(this.generateSvgTextLayer(page, fontMappings));
     } else if (this.options.textLayout === 'semantic' && this.options.preserveLayout) {
-      parts.push(this.generateSemanticPositionedText(page, fontMappings));
+      parts.push(this.generatePositionedSemanticText(page, fontMappings));
+    } else if (this.options.textLayout === 'flow' && this.options.preserveLayout) {
+      parts.push(this.generateOutlineFlowText(page, fontMappings));
     } else if (!this.options.preserveLayout && this.options.textLayout === 'flow') {
       const semantic = this.semanticHtmlGenerator.generateSemanticHTML(page, this.regionLayoutAnalyzer, this.options.semanticLayout, {
         getFontClass: (fontFamily: string) => this.getFontClass(fontFamily, fontMappings),
@@ -352,6 +1142,266 @@ export class HTMLGenerator {
     parts.push('</div>');
 
     return parts.join('\n');
+  }
+
+  private generateOutlineFlowText(page: PDFPage, fontMappings: FontMapping[]): string {
+    const items = page.content.text;
+    if (!items || items.length === 0) return '';
+
+    const nonEmpty = items.filter((t) => t.text && t.text.trim().length > 0);
+    if (nonEmpty.length === 0) return '';
+
+    const analysis = this.regionLayoutAnalyzer.analyze(page);
+    const passes = this.options.textLayoutPasses ?? 1;
+    const html: string[] = [];
+
+    const headingThreshold =
+      typeof this.options.semanticLayout?.headingThreshold === 'number'
+        ? this.options.semanticLayout.headingThreshold
+        : 1.2;
+    const maxHeadingLength =
+      typeof this.options.semanticLayout?.maxHeadingLength === 'number'
+        ? this.options.semanticLayout.maxHeadingLength
+        : 100;
+    const medianFontSize = analysis.medianFontSize || 12;
+
+    const getListMarkerInfo = (text: string): { listType: 'ul' | 'ol' } | null => {
+      const trimmed = text.trimStart();
+      if (!trimmed) return null;
+      for (const entry of HTMLGenerator.OUTLINE_LIST_MARKERS) {
+        if (entry.pattern.test(trimmed)) return { listType: entry.listType };
+      }
+      return null;
+    };
+
+    const stripListMarkerFromTokens = (tokens: LineToken[]): LineToken[] => {
+      if (!tokens || tokens.length === 0) return tokens;
+      const raw = tokens
+        .map((t) => (t.type === 'space' ? ' ' : t.text))
+        .join('');
+      const leadingWs = raw.length - raw.trimStart().length;
+      const trimmed = raw.trimStart();
+      if (!trimmed) return tokens;
+
+      let markerLen = 0;
+      for (const entry of HTMLGenerator.OUTLINE_LIST_MARKERS) {
+        const m = trimmed.match(entry.pattern);
+        if (m && m[0]) {
+          markerLen = m[0].length;
+          break;
+        }
+      }
+      if (markerLen <= 0) return tokens;
+
+      let toRemove = leadingWs + markerLen;
+      const out: LineToken[] = [];
+
+      for (const t of tokens) {
+        if (toRemove <= 0) {
+          out.push(t);
+          continue;
+        }
+
+        if (t.type === 'space') {
+          toRemove -= 1;
+          continue;
+        }
+
+        const text = t.text || '';
+        if (text.length <= toRemove) {
+          toRemove -= text.length;
+          continue;
+        }
+
+        out.push({ ...t, text: text.slice(toRemove) });
+        toRemove = 0;
+      }
+
+      return out;
+    };
+
+    const shouldBeHeading = (p: (typeof analysis.regions)[number]['paragraphs'][number]): { level: number } | null => {
+      const txt = p.lines
+        .map((l) => (l.text || '').trim())
+        .filter((t) => t.length > 0)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!txt) return null;
+      if (txt.length > maxHeadingLength) return null;
+      if (p.lines.length !== 1) return null;
+
+      const fs = p.dominant?.fontSize || 12;
+      const ratio = fs / medianFontSize;
+      if (ratio < headingThreshold) return null;
+
+      const isBold = (p.dominant?.fontWeight || 400) > 450;
+      const isAllCaps = txt === txt.toUpperCase() && /[A-Z]/.test(txt);
+      if (!isBold && !isAllCaps) return null;
+
+      const level = ratio >= 2.0 ? 1 : ratio >= 1.8 ? 2 : ratio >= 1.5 ? 3 : ratio >= 1.3 ? 4 : ratio >= 1.2 ? 5 : 6;
+      return { level };
+    };
+
+    for (const region of analysis.regions) {
+      const width = Math.max(0, region.rect.width);
+      const height = Math.max(0, region.rect.height);
+
+      html.push(
+        `<div class="pdf-text-region" style="position: absolute; left: ${region.rect.left}px; top: ${region.rect.top}px; width: ${width}px; min-height: ${height}px;" data-x="${region.rect.left}" data-top="${region.rect.top}" data-width="${width}" data-height="${height}" data-flow="${region.flowAllowed ? '1' : '0'}">`
+      );
+
+      if (region.flowAllowed && region.paragraphs.length > 0) {
+        let openListType: 'ul' | 'ol' | null = null;
+
+        const closeList = (): void => {
+          if (!openListType) return;
+          html.push(`</${openListType}>`);
+          openListType = null;
+        };
+
+        for (const paragraph of region.paragraphs) {
+          const heading = shouldBeHeading(paragraph);
+          if (heading) {
+            closeList();
+          }
+
+          const dominant = paragraph.dominant;
+          const fontClass = this.getFontClass(dominant.fontFamily, fontMappings);
+          const lineHeight = Math.max(1, Math.round(paragraph.lineHeight * 1000) / 1000);
+          const flowStyle: Record<string, string> = {
+            position: 'relative',
+            'white-space': 'pre-wrap',
+            'line-height': `${lineHeight}px`,
+            ...(passes >= 2 ? {} : { 'font-size': `${dominant.fontSize}px`, color: dominant.color })
+          };
+          if (passes < 2) {
+            if (dominant.fontWeight && dominant.fontWeight !== 400) flowStyle['font-weight'] = String(dominant.fontWeight);
+            if (dominant.fontStyle && dominant.fontStyle !== 'normal') flowStyle['font-style'] = dominant.fontStyle;
+          }
+
+          const flowClass = this.getFlowStyleClass(flowStyle);
+
+          const mt = Math.max(0, Math.round(paragraph.gapBefore * 1000) / 1000);
+          const indents = paragraph.lines.map((l) => l.indent);
+          const minIndent = indents.length > 0 ? Math.max(0, Math.round(Math.min(...indents) * 1000) / 1000) : 0;
+          const firstIndent = indents.length > 0 ? Math.max(0, Math.round(indents[0] * 1000) / 1000) : 0;
+          const textIndent = Math.round((firstIndent - minIndent) * 1000) / 1000;
+
+          const inlineParts: string[] = [];
+          if (mt > 0) inlineParts.push(`margin-top: ${mt}px`);
+          if (minIndent > 0) inlineParts.push(`padding-left: ${minIndent}px`);
+          if (Math.abs(textIndent) > 0.01) inlineParts.push(`text-indent: ${textIndent}px`);
+          const inlineStyle = inlineParts.length > 0 ? ` style="${inlineParts.join('; ')}"` : '';
+
+          let paragraphBody: string;
+
+          const listMarkerText = paragraph.lines.length > 0 ? (paragraph.lines[0]?.text || '') : '';
+          const listInfo = getListMarkerInfo(listMarkerText);
+          if (listInfo) {
+            if (openListType && openListType !== listInfo.listType) {
+              closeList();
+            }
+            if (!openListType) {
+              openListType = listInfo.listType;
+              html.push(`<${openListType}>`);
+            }
+          } else {
+            closeList();
+          }
+
+          if (passes >= 2) {
+            const parts: string[] = [];
+
+            for (let i = 0; i < paragraph.lines.length; i++) {
+              const lineEntry = paragraph.lines[i];
+
+              if (i > 0 && !lineEntry.joinWithPrev) {
+                parts.push('<br/>');
+              }
+
+              const sourceLine = lineEntry.sourceLine;
+              if (!sourceLine) {
+                const fallback = (lineEntry.text || '').trim();
+                if (fallback.length > 0) parts.push(this.escapeHtml(fallback));
+                continue;
+              }
+
+              let tokens = this.regionLayoutAnalyzer.reconstructLineTokens(sourceLine.items) as LineToken[];
+              const nextEntry = paragraph.lines[i + 1];
+              if (nextEntry?.joinWithPrev === 'hyphenation') {
+                tokens = this.stripTrailingSoftHyphen(tokens);
+              }
+
+              if (listInfo && i === 0) {
+                tokens = stripListMarkerFromTokens(tokens);
+              }
+
+              parts.push(this.renderTokens(tokens, fontMappings));
+            }
+
+            paragraphBody = parts.join('');
+          } else {
+            const mergedText = paragraph.lines
+              .map((l) => (l.text || '').trim())
+              .filter((t) => t.length > 0)
+              .join('\n');
+            const stripped = listInfo
+              ? mergedText.replace(/^\s+/, '').replace(HTMLGenerator.OUTLINE_LIST_MARKERS.find((x) => x.listType === listInfo.listType)?.pattern ?? /^$/, '')
+              : mergedText;
+            paragraphBody = this.escapeHtml(stripped).replace(/\n/g, '<br/>');
+          }
+
+          if (heading) {
+            html.push(`<h${heading.level} class="${fontClass} ${flowClass}"${inlineStyle}>${paragraphBody}</h${heading.level}>`);
+          } else if (listInfo) {
+            html.push(`<li class="${fontClass} ${flowClass}"${inlineStyle}>${paragraphBody}</li>`);
+          } else {
+            html.push(`<p class="${fontClass} ${flowClass}"${inlineStyle}>${paragraphBody}</p>`);
+          }
+        }
+
+        if (openListType) {
+          html.push(`</${openListType}>`);
+        }
+
+        html.push('</div>');
+        continue;
+      }
+
+      const orderedLines = [...region.lines].sort((a, b) => {
+        const yDiff = a.rect.top - b.rect.top;
+        if (Math.abs(yDiff) > 0.5) return yDiff;
+        return a.minX - b.minX;
+      });
+
+      let prevBottom: number | null = null;
+
+      html.push('<div style="position: relative; white-space: normal;">');
+
+      for (const line of orderedLines) {
+        const text = this.regionLayoutAnalyzer.reconstructLineText(line.items);
+        if (!text || text.trim().length === 0) continue;
+
+        const mt =
+          typeof prevBottom === 'number'
+            ? Math.max(0, Math.round((line.rect.top - prevBottom) * 1000) / 1000)
+            : 0;
+        prevBottom = line.rect.top + line.rect.height;
+
+        const tokens = this.regionLayoutAnalyzer.reconstructLineTokens(line.items) as LineToken[];
+        const body = passes >= 2 ? this.renderTokens(tokens, fontMappings) : this.escapeHtml(text);
+
+        const styleParts: string[] = ['display: block'];
+        if (mt > 0.25) styleParts.push(`margin-top: ${mt}px`);
+        html.push(`<div style="${styleParts.join('; ')}">${body}</div>`);
+      }
+
+      html.push('</div>');
+      html.push('</div>');
+    }
+
+    return html.join('\n');
   }
 
   private generateSmartText(page: PDFPage, fontMappings: FontMapping[]): string {

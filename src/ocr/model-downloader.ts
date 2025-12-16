@@ -67,9 +67,10 @@ export class ModelDownloader {
       const chunks: Uint8Array[] = [];
       let receivedLength = 0;
 
-      while (true) {
+      // eslint no-constant-condition: loop terminates on reader.done
+      for (;;) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done || !value) break;
 
         chunks.push(value);
         receivedLength += value.length;

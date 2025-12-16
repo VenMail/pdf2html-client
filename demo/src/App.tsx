@@ -25,6 +25,9 @@ function App() {
   const [semanticHeadingThreshold, setSemanticHeadingThreshold] = useState<number>(1.2);
   const [semanticMaxHeadingLength, setSemanticMaxHeadingLength] = useState<number>(100);
 
+  const [semanticMergeSameStyleLines, setSemanticMergeSameStyleLines] = useState(true);
+  const [semanticWhitespacePadding, setSemanticWhitespacePadding] = useState(true);
+
   const [absElementLineHeightFactor, setAbsElementLineHeightFactor] = useState<number>(1.15);
   const [absRunLineHeightFactor, setAbsRunLineHeightFactor] = useState<number>(1.15);
   const [absLineHeightFactor, setAbsLineHeightFactor] = useState<number>(1.25);
@@ -98,7 +101,15 @@ function App() {
                   blockGapFactor: semanticBlockGapFactor,
                   headingThreshold: semanticHeadingThreshold,
                   maxHeadingLength: semanticMaxHeadingLength
-                }
+                },
+                ...(semanticTextLayout === 'semantic'
+                  ? {
+                      semanticPositionedLayout: {
+                        mergeSameStyleLines: semanticMergeSameStyleLines,
+                        whitespacePadding: semanticWhitespacePadding
+                      }
+                    }
+                  : {})
               }
             : {})
         }
@@ -196,6 +207,30 @@ function App() {
                     value={semanticPreserveLayout ? '1' : '0'}
                     onChange={(e) => setSemanticPreserveLayout(e.target.value === '1')}
                     disabled={loading}
+                  >
+                    <option value="1">true</option>
+                    <option value="0">false</option>
+                  </select>
+                </label>
+
+                <label className="tuning-field">
+                  Merge same-style lines
+                  <select
+                    value={semanticMergeSameStyleLines ? '1' : '0'}
+                    onChange={(e) => setSemanticMergeSameStyleLines(e.target.value === '1')}
+                    disabled={loading || semanticTextLayout !== 'semantic'}
+                  >
+                    <option value="1">true</option>
+                    <option value="0">false</option>
+                  </select>
+                </label>
+
+                <label className="tuning-field">
+                  Whitespace padding
+                  <select
+                    value={semanticWhitespacePadding ? '1' : '0'}
+                    onChange={(e) => setSemanticWhitespacePadding(e.target.value === '1')}
+                    disabled={loading || semanticTextLayout !== 'semantic'}
                   >
                     <option value="1">true</option>
                     <option value="0">false</option>

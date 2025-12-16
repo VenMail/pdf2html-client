@@ -225,9 +225,21 @@ export class SemanticHTMLGenerator {
       const b = blocks[i]!;
       out.push(b);
 
-      if (b.type !== 'heading') continue;
       const key = headingKey(b);
-      if (!/^IMPORTANT\s*NOTES?$/.test(key)) continue;
+      const isImportantNotes = /\bIMPORTANT\s*NOTES?\b/.test(key);
+      if (!isImportantNotes) continue;
+
+      // Promote exact IMPORTANT NOTES paragraphs to headings so downstream rewriting still happens.
+      const headingBlock: Block =
+        b.type === 'heading'
+          ? b
+          : {
+              ...b,
+              type: 'heading',
+              level: 3
+            };
+
+      out[out.length - 1] = headingBlock;
 
       const following: Block[] = [];
       let j = i + 1;
@@ -235,7 +247,7 @@ export class SemanticHTMLGenerator {
         const next = blocks[j]!;
         if (next.type === 'heading') break;
         if (next.type !== 'paragraph') break;
-        const indentDelta = Math.abs((next.indent ?? next.lines[0]!.minX) - (b.indent ?? b.lines[0]!.minX));
+        const indentDelta = Math.abs((next.indent ?? next.lines[0]!.minX) - (headingBlock.indent ?? headingBlock.lines[0]!.minX));
         if (indentDelta > maxIndentDelta) break;
         following.push(next);
       }
@@ -310,7 +322,7 @@ export class SemanticHTMLGenerator {
       });
 
       out.pop();
-      out.push(b);
+      out.push(headingBlock);
       out.push(listBlock);
 
       i = j - 1;
