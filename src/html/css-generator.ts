@@ -23,7 +23,6 @@ export class CSSGenerator {
     }
 
     if (this.cssOptions.includeFonts) {
-      styles.push(this.generateFontImports(fontMappings));
       styles.push(this.generateFontRules(fontMappings));
     }
 
@@ -64,27 +63,6 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 `;
-  }
-
-  private generateFontImports(fontMappings: FontMapping[]): string {
-    const uniqueFonts = new Set(
-      fontMappings.map((m) => m.googleFont.family)
-    );
-
-    const imports: string[] = [];
-
-    for (const fontFamily of uniqueFonts) {
-      const mapping = fontMappings.find((m) => m.googleFont.family === fontFamily);
-      if (mapping) {
-        const variants = [mapping.variant];
-        const fontUrl = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(
-          fontFamily
-        )}:wght@${variants.join(';')}&display=swap`;
-        imports.push(`@import url('${fontUrl}');`);
-      }
-    }
-
-    return imports.join('\n');
   }
 
   private generateFontRules(fontMappings: FontMapping[]): string {

@@ -64,7 +64,7 @@
     "updateSnapshots": "missing",
     "updateSourceMethod": "patch",
     "version": "1.57.0",
-    "workers": 1,
+    "workers": 8,
     "webServer": {
       "command": "pnpm run demo",
       "url": "http://localhost:5173",
@@ -74,21 +74,21 @@
   },
   "suites": [
     {
-      "title": "boarding-pass.spec.ts",
-      "file": "boarding-pass.spec.ts",
+      "title": "pdf-analysis.spec.ts",
+      "file": "pdf-analysis.spec.ts",
       "column": 0,
       "line": 0,
       "specs": [],
       "suites": [
         {
-          "title": "Boarding Pass PDF Conversion",
-          "file": "boarding-pass.spec.ts",
-          "line": 211,
+          "title": "PDF Analysis",
+          "file": "pdf-analysis.spec.ts",
+          "line": 37,
           "column": 6,
           "specs": [
             {
-              "title": "should convert boarding_pass.pdf with outline-flow (no absolute text spans) and high fidelity",
-              "ok": false,
+              "title": "should analyze cv.pdf",
+              "ok": true,
               "tags": [],
               "tests": [
                 {
@@ -101,445 +101,42 @@
                     {
                       "workerIndex": 0,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 334,
-                      "error": {
-                        "message": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d",
-                        "stack": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n    at C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts:238:13",
-                        "location": {
-                          "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                          "column": 13,
-                          "line": 238
-                        },
-                        "snippet": "  236 |     const error = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_ERROR__);\n  237 |     if (error) {\n> 238 |       throw new Error(`Library failed to load: ${error}`);\n      |             ^\n  239 |     }\n  240 |\n  241 |     const ready = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_READY__ === true);"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                            "column": 13,
-                            "line": 238
-                          },
-                          "message": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n\n  236 |     const error = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_ERROR__);\n  237 |     if (error) {\n> 238 |       throw new Error(`Library failed to load: ${error}`);\n      |             ^\n  239 |     }\n  240 |\n  241 |     const ready = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_READY__ === true);\n    at C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts:238:13"
-                        }
-                      ],
+                      "status": "passed",
+                      "duration": 1981,
+                      "errors": [],
                       "stdout": [
                         {
-                          "text": "Browser Error: Failed to load resource: the server responded with a status of 504 (Outdated Optimize Dep)\n"
+                          "text": "\n📊 Analysis Results for cv.pdf:\n"
                         },
                         {
-                          "text": "Browser Error: Failed to load PDF2HTML: TypeError: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n"
+                          "text": "  Pages: 2\n"
+                        },
+                        {
+                          "text": "  Text items: 80\n"
+                        },
+                        {
+                          "text": "  Images: 0\n"
+                        },
+                        {
+                          "text": "  Unique fonts: 0\n"
+                        },
+                        {
+                          "text": "  Processing time: 1092ms\n"
                         }
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2025-12-15T21:42:44.926Z",
+                      "startTime": "2025-12-16T21:13:30.675Z",
                       "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "C:\\dev\\pdf2html-client\\test-results\\boarding-pass-Boarding-Pas-bb45e-ext-spans-and-high-fidelity-chromium\\test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "C:\\dev\\pdf2html-client\\test-results\\boarding-pass-Boarding-Pas-bb45e-ext-spans-and-high-fidelity-chromium\\error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                        "column": 13,
-                        "line": 238
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "expected"
                 }
               ],
-              "id": "2765b7bd85eb713bb41d-6b7c2d37ab6e1a7f8005",
-              "file": "boarding-pass.spec.ts",
-              "line": 247,
-              "column": 3
-            },
-            {
-              "title": "should convert boarding_pass.pdf with v2 classifier (smoke)",
-              "ok": false,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 30000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
-                  "projectId": "chromium",
-                  "projectName": "chromium",
-                  "results": [
-                    {
-                      "workerIndex": 1,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 313,
-                      "error": {
-                        "message": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d",
-                        "stack": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n    at C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts:238:13",
-                        "location": {
-                          "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                          "column": 13,
-                          "line": 238
-                        },
-                        "snippet": "  236 |     const error = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_ERROR__);\n  237 |     if (error) {\n> 238 |       throw new Error(`Library failed to load: ${error}`);\n      |             ^\n  239 |     }\n  240 |\n  241 |     const ready = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_READY__ === true);"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                            "column": 13,
-                            "line": 238
-                          },
-                          "message": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n\n  236 |     const error = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_ERROR__);\n  237 |     if (error) {\n> 238 |       throw new Error(`Library failed to load: ${error}`);\n      |             ^\n  239 |     }\n  240 |\n  241 |     const ready = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_READY__ === true);\n    at C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts:238:13"
-                        }
-                      ],
-                      "stdout": [
-                        {
-                          "text": "Browser Error: Failed to load resource: the server responded with a status of 504 (Outdated Optimize Dep)\n"
-                        },
-                        {
-                          "text": "Browser Error: Failed to load PDF2HTML: TypeError: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2025-12-15T21:42:47.368Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "C:\\dev\\pdf2html-client\\test-results\\boarding-pass-Boarding-Pas-48073-f-with-v2-classifier-smoke--chromium\\test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "C:\\dev\\pdf2html-client\\test-results\\boarding-pass-Boarding-Pas-48073-f-with-v2-classifier-smoke--chromium\\error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                        "column": 13,
-                        "line": 238
-                      }
-                    }
-                  ],
-                  "status": "unexpected"
-                }
-              ],
-              "id": "2765b7bd85eb713bb41d-30c83e9a4e3e45671e7d",
-              "file": "boarding-pass.spec.ts",
-              "line": 466,
-              "column": 3
-            },
-            {
-              "title": "should convert boarding_pass.pdf with high fidelity",
-              "ok": false,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 30000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
-                  "projectId": "chromium",
-                  "projectName": "chromium",
-                  "results": [
-                    {
-                      "workerIndex": 2,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 321,
-                      "error": {
-                        "message": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d",
-                        "stack": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n    at C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts:238:13",
-                        "location": {
-                          "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                          "column": 13,
-                          "line": 238
-                        },
-                        "snippet": "  236 |     const error = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_ERROR__);\n  237 |     if (error) {\n> 238 |       throw new Error(`Library failed to load: ${error}`);\n      |             ^\n  239 |     }\n  240 |\n  241 |     const ready = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_READY__ === true);"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                            "column": 13,
-                            "line": 238
-                          },
-                          "message": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n\n  236 |     const error = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_ERROR__);\n  237 |     if (error) {\n> 238 |       throw new Error(`Library failed to load: ${error}`);\n      |             ^\n  239 |     }\n  240 |\n  241 |     const ready = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_READY__ === true);\n    at C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts:238:13"
-                        }
-                      ],
-                      "stdout": [
-                        {
-                          "text": "Browser Error: Failed to load resource: the server responded with a status of 504 (Outdated Optimize Dep)\n"
-                        },
-                        {
-                          "text": "Browser Error: Failed to load PDF2HTML: TypeError: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2025-12-15T21:42:49.768Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "C:\\dev\\pdf2html-client\\test-results\\boarding-pass-Boarding-Pas-b99e9-pass-pdf-with-high-fidelity-chromium\\test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "C:\\dev\\pdf2html-client\\test-results\\boarding-pass-Boarding-Pas-b99e9-pass-pdf-with-high-fidelity-chromium\\error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                        "column": 13,
-                        "line": 238
-                      }
-                    }
-                  ],
-                  "status": "unexpected"
-                }
-              ],
-              "id": "2765b7bd85eb713bb41d-93c8b480666cf939fec5",
-              "file": "boarding-pass.spec.ts",
-              "line": 620,
-              "column": 3
-            },
-            {
-              "title": "should preserve layout structure for boarding pass",
-              "ok": false,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 30000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
-                  "projectId": "chromium",
-                  "projectName": "chromium",
-                  "results": [
-                    {
-                      "workerIndex": 3,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 316,
-                      "error": {
-                        "message": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d",
-                        "stack": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n    at C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts:238:13",
-                        "location": {
-                          "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                          "column": 13,
-                          "line": 238
-                        },
-                        "snippet": "  236 |     const error = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_ERROR__);\n  237 |     if (error) {\n> 238 |       throw new Error(`Library failed to load: ${error}`);\n      |             ^\n  239 |     }\n  240 |\n  241 |     const ready = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_READY__ === true);"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                            "column": 13,
-                            "line": 238
-                          },
-                          "message": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n\n  236 |     const error = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_ERROR__);\n  237 |     if (error) {\n> 238 |       throw new Error(`Library failed to load: ${error}`);\n      |             ^\n  239 |     }\n  240 |\n  241 |     const ready = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_READY__ === true);\n    at C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts:238:13"
-                        }
-                      ],
-                      "stdout": [
-                        {
-                          "text": "Browser Error: Failed to load resource: the server responded with a status of 504 (Outdated Optimize Dep)\n"
-                        },
-                        {
-                          "text": "Browser Error: Failed to load PDF2HTML: TypeError: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2025-12-15T21:42:52.235Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "C:\\dev\\pdf2html-client\\test-results\\boarding-pass-Boarding-Pas-81cd1-structure-for-boarding-pass-chromium\\test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "C:\\dev\\pdf2html-client\\test-results\\boarding-pass-Boarding-Pas-81cd1-structure-for-boarding-pass-chromium\\error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                        "column": 13,
-                        "line": 238
-                      }
-                    }
-                  ],
-                  "status": "unexpected"
-                }
-              ],
-              "id": "2765b7bd85eb713bb41d-47d63e928969373abafe",
-              "file": "boarding-pass.spec.ts",
-              "line": 935,
-              "column": 3
-            },
-            {
-              "title": "should extract semantic IMPORTANT NOTES as heading + 2-item list (flow mode)",
-              "ok": false,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 30000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
-                  "projectId": "chromium",
-                  "projectName": "chromium",
-                  "results": [
-                    {
-                      "workerIndex": 4,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 316,
-                      "error": {
-                        "message": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d",
-                        "stack": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n    at C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts:238:13",
-                        "location": {
-                          "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                          "column": 13,
-                          "line": 238
-                        },
-                        "snippet": "  236 |     const error = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_ERROR__);\n  237 |     if (error) {\n> 238 |       throw new Error(`Library failed to load: ${error}`);\n      |             ^\n  239 |     }\n  240 |\n  241 |     const ready = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_READY__ === true);"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                            "column": 13,
-                            "line": 238
-                          },
-                          "message": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n\n  236 |     const error = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_ERROR__);\n  237 |     if (error) {\n> 238 |       throw new Error(`Library failed to load: ${error}`);\n      |             ^\n  239 |     }\n  240 |\n  241 |     const ready = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_READY__ === true);\n    at C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts:238:13"
-                        }
-                      ],
-                      "stdout": [
-                        {
-                          "text": "Browser Error: Failed to load resource: the server responded with a status of 504 (Outdated Optimize Dep)\n"
-                        },
-                        {
-                          "text": "Browser Error: Failed to load PDF2HTML: TypeError: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2025-12-15T21:42:54.665Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "C:\\dev\\pdf2html-client\\test-results\\boarding-pass-Boarding-Pas-239bc-ding-2-item-list-flow-mode--chromium\\test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "C:\\dev\\pdf2html-client\\test-results\\boarding-pass-Boarding-Pas-239bc-ding-2-item-list-flow-mode--chromium\\error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                        "column": 13,
-                        "line": 238
-                      }
-                    }
-                  ],
-                  "status": "unexpected"
-                }
-              ],
-              "id": "2765b7bd85eb713bb41d-61f96f57aecacdf92e34",
-              "file": "boarding-pass.spec.ts",
-              "line": 996,
-              "column": 3
-            },
-            {
-              "title": "should convert boarding_pass.pdf with semantic layout and high fidelity",
-              "ok": false,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 30000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
-                  "projectId": "chromium",
-                  "projectName": "chromium",
-                  "results": [
-                    {
-                      "workerIndex": 5,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 344,
-                      "error": {
-                        "message": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d",
-                        "stack": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n    at C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts:238:13",
-                        "location": {
-                          "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                          "column": 13,
-                          "line": 238
-                        },
-                        "snippet": "  236 |     const error = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_ERROR__);\n  237 |     if (error) {\n> 238 |       throw new Error(`Library failed to load: ${error}`);\n      |             ^\n  239 |     }\n  240 |\n  241 |     const ready = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_READY__ === true);"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                            "column": 13,
-                            "line": 238
-                          },
-                          "message": "Error: Library failed to load: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n\n  236 |     const error = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_ERROR__);\n  237 |     if (error) {\n> 238 |       throw new Error(`Library failed to load: ${error}`);\n      |             ^\n  239 |     }\n  240 |\n  241 |     const ready = await page.evaluate(() => (window as unknown as TestWindow).__PDF2HTML_READY__ === true);\n    at C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts:238:13"
-                        }
-                      ],
-                      "stdout": [
-                        {
-                          "text": "Browser Error: Failed to load resource: the server responded with a status of 504 (Outdated Optimize Dep)\n"
-                        },
-                        {
-                          "text": "Browser Error: Failed to load PDF2HTML: TypeError: Failed to fetch dynamically imported module: http://localhost:5173/@fs/C:/dev/pdf2html-client/node_modules/.vite/deps/pdfjs-dist.js?v=3170694d\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2025-12-15T21:42:57.095Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "C:\\dev\\pdf2html-client\\test-results\\boarding-pass-Boarding-Pas-52c37-ic-layout-and-high-fidelity-chromium\\test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "C:\\dev\\pdf2html-client\\test-results\\boarding-pass-Boarding-Pas-52c37-ic-layout-and-high-fidelity-chromium\\error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "C:\\dev\\pdf2html-client\\tests\\browser\\boarding-pass.spec.ts",
-                        "column": 13,
-                        "line": 238
-                      }
-                    }
-                  ],
-                  "status": "unexpected"
-                }
-              ],
-              "id": "2765b7bd85eb713bb41d-bb221ccf41dd4fea7fca",
-              "file": "boarding-pass.spec.ts",
-              "line": 1053,
+              "id": "56836a4fa647db3d910a-90313458591987117aa6",
+              "file": "pdf-analysis.spec.ts",
+              "line": 152,
               "column": 3
             }
           ]
@@ -549,11 +146,11 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2025-12-15T21:42:43.144Z",
-    "duration": 14790.792999999998,
-    "expected": 0,
+    "startTime": "2025-12-16T21:13:27.905Z",
+    "duration": 5444.0650000000005,
+    "expected": 1,
     "skipped": 0,
-    "unexpected": 6,
+    "unexpected": 0,
     "flaky": 0
   }
 }

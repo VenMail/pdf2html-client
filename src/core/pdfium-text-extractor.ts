@@ -36,7 +36,7 @@ export class PDFiumTextExtractor {
         const textItems = await page.getTextWithPosition();
         
         for (const item of textItems) {
-          const textContent = this.parseTextItem(item, pageHeight);
+          const textContent = this.parseTextItem(item);
           if (textContent) {
             textContents.push(textContent);
 
@@ -87,16 +87,13 @@ export class PDFiumTextExtractor {
   }
 
   private parseTextItem(
-    item: PDFiumTextItem,
-    pageHeight: number
+    item: PDFiumTextItem
   ): PDFTextContent | null {
     if (!item.text || item.text.trim().length === 0) {
       return null;
     }
 
-    // PDFium coordinates: origin at bottom-left
-    // Convert to top-left origin
-    const y = pageHeight - item.y - item.height;
+    const y = item.y;
 
     const fontName = item.fontName || '';
     const derived = deriveFontWeightAndStyle({ fontName, fontFamily: fontName, fontFlags: 0 });

@@ -1,13 +1,10 @@
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 import { existsSync, mkdirSync, copyFileSync } from 'fs';
 import { createRequire } from 'module';
 
-export default defineConfig(({ mode }) => {
-  // Load env file based on `mode` in the current working directory.
-  const env = loadEnv(mode, process.cwd(), '');
-
+export default defineConfig(() => {
   const ensurePdfiumWasmPlugin = () => {
     const require = createRequire(import.meta.url);
     return {
@@ -65,10 +62,6 @@ export default defineConfig(({ mode }) => {
       exclude: ['@embedpdf/pdfium'],
       include: ['unpdf'],
       force: true
-    },
-    define: {
-      // Make env variables available in client code
-      'import.meta.env.GOOGLE_API_KEY': JSON.stringify(env.GOOGLE_API_KEY || '')
     },
     server: {
       port: 5173,

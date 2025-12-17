@@ -48,6 +48,190 @@ describe('HTMLGenerator', () => {
     expect(output.css).toBeDefined();
   });
 
+  it('should convert underline path graphics into text-decoration underline and remove the graphic', () => {
+    const generator = new HTMLGenerator({
+      format: 'html+inline-css',
+      preserveLayout: true,
+      textLayout: 'semantic',
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64',
+      useFlexboxLayout: true
+    });
+
+    const pageHeight = 792;
+    const y = 700;
+    const textHeight = 10;
+    const underlineY = pageHeight - y - textHeight + textHeight + 2;
+
+    const mockDocument: PDFDocument = {
+      pageCount: 1,
+      metadata: {},
+      pages: [
+        {
+          pageNumber: 0,
+          width: 612,
+          height: pageHeight,
+          content: {
+            text: [
+              { text: 'Underlined', x: 50, y, width: 80, height: textHeight, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' }
+            ],
+            images: [],
+            graphics: [
+              { type: 'path', path: `M 50 ${underlineY} L 130 ${underlineY}`, stroke: '#000000', strokeWidth: 1 }
+            ],
+            forms: [],
+            annotations: []
+          }
+        }
+      ]
+    };
+
+    const output = generator.generate(mockDocument, [], { pageCount: 1, processingTime: 0, ocrUsed: false, fontMappings: 0 });
+
+    expect(output.html).toContain('Underlined');
+    expect(output.css).toMatch(/text-decoration\s*:\s*underline/);
+    expect(output.html).not.toContain('<path d="M 50');
+  });
+
+  it('should convert underline rectangle graphics into text-decoration underline and remove the graphic', () => {
+    const generator = new HTMLGenerator({
+      format: 'html+inline-css',
+      preserveLayout: true,
+      textLayout: 'semantic',
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64',
+      useFlexboxLayout: true
+    });
+
+    const pageHeight = 792;
+    const y = 700;
+    const textHeight = 10;
+    const underlineY = pageHeight - y - textHeight + textHeight + 2;
+
+    const mockDocument: PDFDocument = {
+      pageCount: 1,
+      metadata: {},
+      pages: [
+        {
+          pageNumber: 0,
+          width: 612,
+          height: pageHeight,
+          content: {
+            text: [
+              { text: 'Underlined', x: 50, y, width: 80, height: textHeight, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' }
+            ],
+            images: [],
+            graphics: [
+              { type: 'rectangle', x: 50, y: underlineY, width: 80, height: 1, stroke: '#000000', strokeWidth: 1 }
+            ],
+            forms: [],
+            annotations: []
+          }
+        }
+      ]
+    };
+
+    const output = generator.generate(mockDocument, [], { pageCount: 1, processingTime: 0, ocrUsed: false, fontMappings: 0 });
+
+    expect(output.html).toContain('Underlined');
+    expect(output.css).toMatch(/text-decoration\s*:\s*underline/);
+    expect(output.html).not.toContain('<rect');
+  });
+
+  it('should convert underline line graphics into text-decoration underline and remove the graphic', () => {
+    const generator = new HTMLGenerator({
+      format: 'html+inline-css',
+      preserveLayout: true,
+      textLayout: 'semantic',
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64',
+      useFlexboxLayout: true
+    });
+
+    const pageHeight = 792;
+    const y = 700;
+    const textHeight = 10;
+    const underlineY = pageHeight - y - textHeight + textHeight + 2;
+
+    const mockDocument: PDFDocument = {
+      pageCount: 1,
+      metadata: {},
+      pages: [
+        {
+          pageNumber: 0,
+          width: 612,
+          height: pageHeight,
+          content: {
+            text: [
+              { text: 'Underlined', x: 50, y, width: 80, height: textHeight, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' }
+            ],
+            images: [],
+            graphics: [
+              { type: 'line', x: 50, y: underlineY, width: 80, height: 0, stroke: '#000000', strokeWidth: 1 }
+            ],
+            forms: [],
+            annotations: []
+          }
+        }
+      ]
+    };
+
+    const output = generator.generate(mockDocument, [], { pageCount: 1, processingTime: 0, ocrUsed: false, fontMappings: 0 });
+
+    expect(output.html).toContain('Underlined');
+    expect(output.css).toMatch(/text-decoration\s*:\s*underline/);
+    expect(output.html).not.toContain('<line');
+  });
+
+  it('should not convert long fill-line separators into underline styling', () => {
+    const generator = new HTMLGenerator({
+      format: 'html+inline-css',
+      preserveLayout: true,
+      textLayout: 'semantic',
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64',
+      useFlexboxLayout: true
+    });
+
+    const pageHeight = 792;
+    const y = 700;
+    const textHeight = 10;
+    const underlineY = pageHeight - y - textHeight + textHeight + 2;
+
+    const mockDocument: PDFDocument = {
+      pageCount: 1,
+      metadata: {},
+      pages: [
+        {
+          pageNumber: 0,
+          width: 612,
+          height: pageHeight,
+          content: {
+            text: [
+              { text: 'Name:', x: 50, y, width: 35, height: textHeight, fontSize: 10, fontFamily: 'DejaVuSans', fontWeight: 400, fontStyle: 'normal', color: '#000000' }
+            ],
+            images: [],
+            graphics: [
+              { type: 'line', x: 90, y: underlineY, width: 480, height: 0, stroke: '#000000', strokeWidth: 1 }
+            ],
+            forms: [],
+            annotations: []
+          }
+        }
+      ]
+    };
+
+    const output = generator.generate(mockDocument, [], { pageCount: 1, processingTime: 0, ocrUsed: false, fontMappings: 0 });
+
+    expect(output.html).toContain('Name:');
+    expect(output.css).not.toMatch(/text-decoration\s*:\s*underline/);
+    expect(output.html).toContain('<line');
+  });
+
   it('should avoid injecting whitespace padding between opening quote and following word (semantic flexbox)', () => {
     const generator = new HTMLGenerator({
       format: 'html+inline-css',

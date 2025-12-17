@@ -299,6 +299,7 @@ export class RegionLayoutAnalyzer {
       fontWeight: run.fontWeight,
       fontStyle: run.fontStyle,
       color: run.color,
+      textDecoration: run.textDecoration,
       rotation: run.rotation
     }));
   }

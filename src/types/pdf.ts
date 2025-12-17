@@ -41,6 +41,7 @@ export interface PDFTextContent {
   fontWeight: number;
   fontStyle: 'normal' | 'italic' | 'oblique';
   color: string;
+  textDecoration?: 'none' | 'underline' | 'line-through' | 'overline';
   fontInfo?: PDFFontInfo;
   rotation?: number;
 }

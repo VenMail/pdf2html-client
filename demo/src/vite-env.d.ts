@@ -2,7 +2,6 @@
 
 declare global {
   interface ImportMetaEnv {
-    readonly GOOGLE_API_KEY?: string;
   }
 
   interface ImportMeta {

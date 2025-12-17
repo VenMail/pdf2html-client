@@ -3,44 +3,16 @@ import type { GoogleFont } from '../types/fonts.js';
 export class GoogleFontsAPI {
   private cache: Map<string, GoogleFont[]> = new Map();
   private allFonts: GoogleFont[] | null = null;
-  private apiKey: string | null = null;
 
-  constructor(apiKey?: string) {
-    this.apiKey = apiKey || null;
-  }
-
-  setApiKey(apiKey: string): void {
-    this.apiKey = apiKey;
-    this.clearCache(); // Clear cache when API key changes
-  }
+  constructor() {}
 
   async getAllFonts(): Promise<GoogleFont[]> {
     if (this.allFonts) {
       return this.allFonts;
     }
 
-    // If no API key, use fallback fonts
-    if (!this.apiKey) {
-      console.warn('Google Fonts API key not provided, using fallback fonts');
-      return this.getFallbackFonts();
-    }
-
-    try {
-      const response = await fetch(
-        `https://www.googleapis.com/webfonts/v1/webfonts?key=${this.apiKey}`
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch Google Fonts');
-      }
-
-      const data = await response.json();
-      this.allFonts = data.items || [];
-      return this.allFonts as GoogleFont[];
-    } catch (error) {
-      console.warn('Failed to fetch Google Fonts, using fallback list:', error);
-      return this.getFallbackFonts();
-    }
+    this.allFonts = this.getFallbackFonts();
+    return this.allFonts;
   }
 
   async searchFonts(query: string): Promise<GoogleFont[]> {

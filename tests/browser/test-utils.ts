@@ -5,7 +5,6 @@
 export interface TestConfig {
   enableOCR?: boolean;
   enableFontMapping?: boolean;
-  googleApiKey?: string;
 }
 
 export async function createConverter(page: any, config: TestConfig = {}) {
@@ -13,22 +12,14 @@ export async function createConverter(page: any, config: TestConfig = {}) {
     return import('/src/index.ts');
   }).then((mod: any) => mod);
 
-  const apiKey = config.googleApiKey || 
-                 (window as any).__GOOGLE_API_KEY__ || 
-                 (import.meta as any).env?.GOOGLE_API_KEY || 
-                 '';
-
   return new PDF2HTML({
     enableOCR: config.enableOCR ?? false,
-    enableFontMapping: config.enableFontMapping ?? true,
+    enableFontMapping: config.enableFontMapping ?? false,
     htmlOptions: {
       format: 'html+inline-css',
       preserveLayout: true,
       responsive: true,
       darkMode: false,
-    },
-    fontMappingOptions: {
-      googleApiKey: apiKey,
     },
   });
 }

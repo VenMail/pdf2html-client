@@ -55,6 +55,9 @@ export class ImprovedTextMerger {
     if (run.fontWeight !== item.fontWeight) return false;
     if (run.fontStyle !== item.fontStyle) return false;
     if (run.color !== item.color) return false;
+    const runDeco = run.textDecoration || 'none';
+    const itemDeco = item.textDecoration || 'none';
+    if (runDeco !== itemDeco) return false;
     const runRot = typeof run.rotation === 'number' ? run.rotation : 0;
     const itemRot = typeof item.rotation === 'number' ? item.rotation : 0;
     if (Math.abs(runRot - itemRot) > 0.01) return false;
@@ -76,6 +79,7 @@ export class ImprovedTextMerger {
       fontWeight: item.fontWeight,
       fontStyle: item.fontStyle,
       color: item.color,
+      textDecoration: item.textDecoration,
       rotation: item.rotation
     };
   }
@@ -92,6 +96,7 @@ export class ImprovedTextMerger {
       fontWeight: run.fontWeight,
       fontStyle: run.fontStyle,
       color: run.color,
+      textDecoration: run.textDecoration,
       rotation: run.rotation
     };
   }

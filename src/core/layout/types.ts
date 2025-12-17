@@ -13,6 +13,7 @@ export type TextRun = {
   fontWeight: number;
   fontStyle: PDFTextContent['fontStyle'];
   color: string;
+  textDecoration?: PDFTextContent['textDecoration'];
   rotation?: number;
 };
 

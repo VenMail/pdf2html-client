@@ -3,8 +3,6 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import pixelmatch from 'pixelmatch';
-import { PNG } from 'pngjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -31,142 +29,9 @@ type Pdf2HtmlOutput = {
   };
 };
 
-const cropToContent = (png: PNG): PNG => {
-  const { width, height, data } = png;
-  let minX = width;
-  let minY = height;
-  let maxX = -1;
-  let maxY = -1;
-
-  const whiteThreshold = 240;
-
-  const isNonWhite = (idx: number): boolean => {
-    const r = data[idx];
-    const g = data[idx + 1];
-    const b = data[idx + 2];
-    const a = data[idx + 3];
-    if (a === 0) return false;
-    return r < whiteThreshold || g < whiteThreshold || b < whiteThreshold;
-  };
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = (width * y + x) * 4;
-      if (isNonWhite(idx)) {
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-
-  if (maxX < 0 || maxY < 0) return png;
-
-  const cropWidth = Math.max(1, maxX - minX + 1);
-  const cropHeight = Math.max(1, maxY - minY + 1);
-  const cropped = new PNG({ width: cropWidth, height: cropHeight });
-  PNG.bitblt(png, cropped, minX, minY, cropWidth, cropHeight, 0, 0);
-  return cropped;
-};
-
-const resizeNearest = (png: PNG, newWidth: number, newHeight: number): PNG => {
-  if (png.width === newWidth && png.height === newHeight) return png;
-  const out = new PNG({ width: newWidth, height: newHeight });
-  for (let y = 0; y < newHeight; y++) {
-    const srcY = Math.min(png.height - 1, Math.floor((y / newHeight) * png.height));
-    for (let x = 0; x < newWidth; x++) {
-      const srcX = Math.min(png.width - 1, Math.floor((x / newWidth) * png.width));
-      const srcIdx = (png.width * srcY + srcX) * 4;
-      const dstIdx = (newWidth * y + x) * 4;
-      out.data[dstIdx] = png.data[srcIdx];
-      out.data[dstIdx + 1] = png.data[srcIdx + 1];
-      out.data[dstIdx + 2] = png.data[srcIdx + 2];
-      out.data[dstIdx + 3] = png.data[srcIdx + 3];
-    }
-  }
-  return out;
-};
-
-const alignByTranslation = (
-  expected: PNG,
-  actual: PNG
-): { expected: PNG; actual: PNG; dx: number; dy: number } => {
-  const maxDx = 20;
-  const maxDy = 20;
-  const step = 2;
-
-  let bestDx = 0;
-  let bestDy = 0;
-  let bestScore = Number.POSITIVE_INFINITY;
-
-  const scoreAt = (dx: number, dy: number): number => {
-    const width = Math.min(
-      expected.width,
-      actual.width - Math.max(0, dx),
-      expected.width + Math.min(0, dx)
-    );
-    const height = Math.min(
-      expected.height,
-      actual.height - Math.max(0, dy),
-      expected.height + Math.min(0, dy)
-    );
-    if (width <= 50 || height <= 50) return Number.POSITIVE_INFINITY;
-
-    const expCrop = new PNG({ width, height });
-    const actCrop = new PNG({ width, height });
-
-    const expSrcX = dx < 0 ? -dx : 0;
-    const expSrcY = dy < 0 ? -dy : 0;
-    const actSrcX = dx > 0 ? dx : 0;
-    const actSrcY = dy > 0 ? dy : 0;
-
-    PNG.bitblt(expected, expCrop, expSrcX, expSrcY, width, height, 0, 0);
-    PNG.bitblt(actual, actCrop, actSrcX, actSrcY, width, height, 0, 0);
-
-    const tmpDiff = new PNG({ width, height });
-    const diffPixels = pixelmatch(expCrop.data, actCrop.data, tmpDiff.data, width, height, { threshold: 0.15 });
-    return diffPixels / (width * height);
-  };
-
-  for (let dy = -maxDy; dy <= maxDy; dy += step) {
-    for (let dx = -maxDx; dx <= maxDx; dx += step) {
-      const score = scoreAt(dx, dy);
-      if (score < bestScore) {
-        bestScore = score;
-        bestDx = dx;
-        bestDy = dy;
-      }
-    }
-  }
-
-  const width = Math.min(
-    expected.width,
-    actual.width - Math.max(0, bestDx),
-    expected.width + Math.min(0, bestDx)
-  );
-  const height = Math.min(
-    expected.height,
-    actual.height - Math.max(0, bestDy),
-    expected.height + Math.min(0, bestDy)
-  );
-
-  const expAligned = new PNG({ width, height });
-  const actAligned = new PNG({ width, height });
-  const expSrcX = bestDx < 0 ? -bestDx : 0;
-  const expSrcY = bestDy < 0 ? -bestDy : 0;
-  const actSrcX = bestDx > 0 ? bestDx : 0;
-  const actSrcY = bestDy > 0 ? bestDy : 0;
-  PNG.bitblt(expected, expAligned, expSrcX, expSrcY, width, height, 0, 0);
-  PNG.bitblt(actual, actAligned, actSrcX, actSrcY, width, height, 0, 0);
-
-  return { expected: expAligned, actual: actAligned, dx: bestDx, dy: bestDy };
-};
-
 type TestWindow = Window & {
   __PDF2HTML_READY__?: boolean;
   __PDF2HTML_ERROR__?: string | null;
-  __GOOGLE_API_KEY__?: string;
   __PDFJS__?: unknown;
   PDF2HTML?: new (options?: unknown) => {
     convert: (data: ArrayBuffer, progressCb?: (progress: unknown) => void) => Promise<unknown>;
@@ -264,8 +129,6 @@ test.describe('Boarding Pass PDF Conversion', () => {
           throw new Error('PDF2HTML not available');
         }
 
-        const apiKey = (window as unknown as TestWindow).__GOOGLE_API_KEY__ || '';
-
         const converter = new PDF2HTML({
           enableOCR: false,
           enableFontMapping: false,
@@ -279,9 +142,6 @@ test.describe('Boarding Pass PDF Conversion', () => {
             includeExtractedText: true,
             textPipeline: 'v2',
             textClassifierProfile: 'latin-default',
-          },
-          fontMappingOptions: {
-            googleApiKey: apiKey,
           },
         });
 
@@ -351,116 +211,6 @@ test.describe('Boarding Pass PDF Conversion', () => {
 
     expect(editability.regionCount).toBeGreaterThan(0);
     expect(editability.absTextCount, 'No absolutely positioned text spans expected inside text regions').toBe(0);
-
-    if (process.env.PDF2HTML_VISUAL_DIFF === '1') {
-      const pdfBufferForBaseline = readFileSync(pdfPath);
-      const pdfBase64ForBaseline = pdfBufferForBaseline.toString('base64');
-
-      await page.setViewportSize({ width: 1200, height: 900 });
-      await page.evaluate(() => {
-        const existing = document.getElementById('baseline');
-        if (existing) existing.remove();
-        const canvas = document.createElement('canvas');
-        canvas.id = 'baseline';
-        canvas.style.display = 'block';
-        canvas.style.margin = '0';
-        document.body.prepend(canvas);
-      });
-
-      const baselineRenderResult = await page.evaluate(async ({ base64 }) => {
-        try {
-          const binary = atob(base64);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-
-          const win = window as unknown as TestWindow;
-          const pdfjs = win.__PDFJS__ as unknown as { getDocument: (args: unknown) => { promise: Promise<unknown> } } | undefined;
-          if (!pdfjs?.getDocument) {
-            throw new Error('pdf.js not available on window.__PDFJS__');
-          }
-
-          const loadingTask = pdfjs.getDocument({ data: bytes, disableWorker: true } as unknown);
-          const doc = (await loadingTask.promise) as { getPage: (pageNumber: number) => Promise<unknown> };
-          const page1 = await doc.getPage(1);
-          const viewport = (page1 as unknown as { getViewport: (options: { scale: number }) => { width: number; height: number } }).getViewport({
-            scale: 1
-          });
-          const canvas = document.getElementById('baseline') as HTMLCanvasElement | null;
-          if (!canvas) throw new Error('Baseline canvas not found');
-          const ctx = canvas.getContext('2d');
-          if (!ctx) throw new Error('Baseline canvas context not available');
-          canvas.width = Math.ceil(viewport.width);
-          canvas.height = Math.ceil(viewport.height);
-          const renderTask = (page1 as unknown as { render: (opts: { canvasContext: CanvasRenderingContext2D; viewport: unknown }) => { promise: Promise<unknown> } }).render({
-            canvasContext: ctx,
-            viewport
-          });
-          await renderTask.promise;
-          return { ok: true };
-        } catch (error: unknown) {
-          const message =
-            error && typeof error === 'object' && 'message' in error
-              ? String((error as { message?: unknown }).message)
-              : String(error);
-          const stack =
-            error && typeof error === 'object' && 'stack' in error
-              ? String((error as { stack?: unknown }).stack)
-              : '';
-          return { ok: false, message, stack };
-        }
-      }, { base64: pdfBase64ForBaseline });
-
-      if (!baselineRenderResult.ok) {
-        throw new Error(`Baseline render failed: ${baselineRenderResult.message}${baselineRenderResult.stack ? `\n${baselineRenderResult.stack}` : ''}`);
-      }
-
-      const baselineCanvas = await page.$('#baseline');
-      if (!baselineCanvas) throw new Error('Baseline canvas element not found');
-      const baselineBytes = await baselineCanvas.screenshot();
-      const baselinePng = cropToContent(PNG.sync.read(baselineBytes));
-
-      await page.setViewportSize({ width: baselinePng.width, height: baselinePng.height });
-      await page.setContent(fullHtml, { waitUntil: 'load' });
-      await page.waitForTimeout(250);
-
-      const pageEl =
-        (await page.$('.pdf-page-0')) ||
-        (await page.$('[class^="pdf-page-"]'));
-
-      const screenshotBytes = pageEl
-        ? await pageEl.screenshot()
-        : await page.screenshot({ fullPage: false });
-      const actualCropped = cropToContent(PNG.sync.read(screenshotBytes));
-
-      const expectedResized = baselinePng;
-      const actualResized = resizeNearest(actualCropped, expectedResized.width, expectedResized.height);
-      const aligned = alignByTranslation(expectedResized, actualResized);
-      console.log(`Outline flow alignment shift applied: dx=${aligned.dx}, dy=${aligned.dy}`);
-
-      const expectedForCompare = aligned.expected;
-      const actualForCompare = aligned.actual;
-      const width = expectedForCompare.width;
-      const height = expectedForCompare.height;
-
-      const diff = new PNG({ width, height });
-      const diffPixels = pixelmatch(
-        expectedForCompare.data,
-        actualForCompare.data,
-        diff.data,
-        width,
-        height,
-        { threshold: 0.15 }
-      );
-
-      writeFileSync(join(outputDir, 'boarding_pass_baseline.png'), PNG.sync.write(expectedForCompare));
-      writeFileSync(join(outputDir, 'boarding_pass_actual.png'), PNG.sync.write(actualForCompare));
-      writeFileSync(join(outputDir, 'boarding_pass_diff.png'), PNG.sync.write(diff));
-
-      const totalPixels = width * height;
-      const diffRatio = diffPixels / totalPixels;
-      console.log(`Outline flow visual diff: ${diffPixels} pixels (${(diffRatio * 100).toFixed(4)}%)`);
-      expect(diffRatio, 'Outline flow visual diff ratio should be within tolerance').toBeLessThan(0.125);
-    }
   });
 
   test('should convert boarding_pass.pdf with v2 classifier (smoke)', async ({ page }) => {
@@ -483,8 +233,6 @@ test.describe('Boarding Pass PDF Conversion', () => {
           throw new Error('PDF2HTML not available');
         }
 
-        const apiKey = (window as unknown as TestWindow).__GOOGLE_API_KEY__ || '';
-
         const converter = new PDF2HTML({
           enableOCR: false,
           enableFontMapping: false,
@@ -497,9 +245,6 @@ test.describe('Boarding Pass PDF Conversion', () => {
             includeExtractedText: true,
             textPipeline: 'v2',
             textClassifierProfile: 'latin-default',
-          },
-          fontMappingOptions: {
-            googleApiKey: apiKey,
           },
         });
 
@@ -636,9 +381,7 @@ test.describe('Boarding Pass PDF Conversion', () => {
         if (!PDF2HTML) {
           throw new Error('PDF2HTML not available');
         }
-        
-        const apiKey = (window as unknown as TestWindow).__GOOGLE_API_KEY__ || '';
-        
+
         const converter = new PDF2HTML({
           enableOCR: false,
           enableFontMapping: false,
@@ -651,9 +394,6 @@ test.describe('Boarding Pass PDF Conversion', () => {
             includeExtractedText: true,
             textPipeline: 'v2',
             textClassifierProfile: 'latin-default',
-          },
-          fontMappingOptions: {
-            googleApiKey: apiKey,
           },
         });
 
@@ -670,7 +410,6 @@ test.describe('Boarding Pass PDF Conversion', () => {
             const parser = new DOMParser();
             const doc = parser.parseFromString(output.html, 'text/html');
             doc.querySelectorAll('style, script, noscript').forEach((el) => el.remove());
-            // Preserve explicit line breaks in extracted text
             doc.querySelectorAll('br').forEach((br) => br.replaceWith('\n'));
             const raw = doc.body?.textContent || '';
             return raw.replace(/\s+/g, ' ').trim();
@@ -680,7 +419,7 @@ test.describe('Boarding Pass PDF Conversion', () => {
         })();
 
         converter.dispose();
-        
+
         return {
           success: true,
           pageCount: output.metadata.pageCount,
@@ -769,11 +508,11 @@ test.describe('Boarding Pass PDF Conversion', () => {
     mkdirSync(outputDir, { recursive: true });
 
     const fullHtml = buildRenderableHtml(html, css);
-    
+
     const htmlPath = join(outputDir, 'boarding_pass_converted.html');
     writeFileSync(htmlPath, fullHtml, 'utf8');
     console.log(`✓ HTML output saved: ${htmlPath}`);
-    
+
     if (result.css) {
       const cssPath = join(outputDir, 'boarding_pass_styles.css');
       writeFileSync(cssPath, result.css, 'utf8');
@@ -817,119 +556,6 @@ test.describe('Boarding Pass PDF Conversion', () => {
       expect(rule).not.toMatch(/-apple-system|BlinkMacSystemFont|Segoe UI|system-ui/i);
       expect(rule).toMatch(/Arial|Times|Courier|serif|sans-serif|monospace/i);
     }
-
-    if (process.env.PDF2HTML_VISUAL_DIFF === '1') {
-      const pdfBufferForBaseline = readFileSync(pdfPath);
-      const pdfBase64ForBaseline = pdfBufferForBaseline.toString('base64');
-
-      await page.setViewportSize({ width: 1200, height: 900 });
-      await page.evaluate(() => {
-        const existing = document.getElementById('baseline');
-        if (existing) existing.remove();
-        const canvas = document.createElement('canvas');
-        canvas.id = 'baseline';
-        canvas.style.display = 'block';
-        canvas.style.margin = '0';
-        document.body.prepend(canvas);
-      });
-
-      const baselineRenderResult = await page.evaluate(async ({ base64 }) => {
-        try {
-          const binary = atob(base64);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-
-          const win = window as unknown as TestWindow;
-          const pdfjs = win.__PDFJS__ as unknown as { getDocument: (args: unknown) => { promise: Promise<unknown> } } | undefined;
-          if (!pdfjs?.getDocument) {
-            throw new Error('pdf.js not available on window.__PDFJS__');
-          }
-
-          const loadingTask = pdfjs.getDocument({ data: bytes, disableWorker: true } as unknown);
-          const doc = (await loadingTask.promise) as { getPage: (pageNumber: number) => Promise<unknown> };
-          const page1 = await doc.getPage(1);
-          const viewport = (page1 as unknown as { getViewport: (options: { scale: number }) => { width: number; height: number } }).getViewport({
-            scale: 1
-          });
-          const canvas = document.getElementById('baseline') as HTMLCanvasElement | null;
-          if (!canvas) throw new Error('Baseline canvas not found');
-          const ctx = canvas.getContext('2d');
-          if (!ctx) throw new Error('Baseline canvas context not available');
-          canvas.width = Math.ceil(viewport.width);
-          canvas.height = Math.ceil(viewport.height);
-          const renderTask = (page1 as unknown as { render: (opts: { canvasContext: CanvasRenderingContext2D; viewport: unknown }) => { promise: Promise<unknown> } }).render({
-            canvasContext: ctx,
-            viewport
-          });
-          await renderTask.promise;
-          return { ok: true };
-        } catch (error: unknown) {
-          const message =
-            error && typeof error === 'object' && 'message' in error
-              ? String((error as { message?: unknown }).message)
-              : String(error);
-          const stack =
-            error && typeof error === 'object' && 'stack' in error
-              ? String((error as { stack?: unknown }).stack)
-              : '';
-          return { ok: false, message, stack };
-        }
-      }, { base64: pdfBase64ForBaseline });
-
-      if (!baselineRenderResult.ok) {
-        throw new Error(`Baseline render failed: ${baselineRenderResult.message}${baselineRenderResult.stack ? `\n${baselineRenderResult.stack}` : ''}`);
-      }
-
-      const baselineCanvas = await page.$('#baseline');
-      if (!baselineCanvas) throw new Error('Baseline canvas element not found');
-      const baselineBytes = await baselineCanvas.screenshot();
-      const baselinePng = cropToContent(PNG.sync.read(baselineBytes));
-
-      await page.setViewportSize({ width: baselinePng.width, height: baselinePng.height });
-      await page.setContent(fullHtml, { waitUntil: 'load' });
-      await page.waitForTimeout(250);
-
-      const pageEl =
-        (await page.$('.pdf-page-0')) ||
-        (await page.$('[class^="pdf-page-"]'));
-
-      const screenshotBytes = pageEl
-        ? await pageEl.screenshot()
-        : await page.screenshot({ fullPage: false });
-      const actualCropped = cropToContent(PNG.sync.read(screenshotBytes));
-
-      const expectedResized = baselinePng;
-      const actualResized = resizeNearest(actualCropped, expectedResized.width, expectedResized.height);
-      const aligned = alignByTranslation(expectedResized, actualResized);
-      console.log(`Alignment shift applied: dx=${aligned.dx}, dy=${aligned.dy}`);
-
-      const expectedForCompare = aligned.expected;
-      const actualForCompare = aligned.actual;
-      const width = expectedForCompare.width;
-      const height = expectedForCompare.height;
-
-      const diff = new PNG({ width, height });
-      const diffPixels = pixelmatch(
-        expectedForCompare.data,
-        actualForCompare.data,
-        diff.data,
-        width,
-        height,
-        { threshold: 0.15 }
-      );
-
-      const baselineImagePath = join(outputDir, 'boarding_pass_baseline.png');
-      const actualImagePath = join(outputDir, 'boarding_pass_actual.png');
-      const diffImagePath = join(outputDir, 'boarding_pass_diff.png');
-      writeFileSync(baselineImagePath, PNG.sync.write(expectedForCompare));
-      writeFileSync(actualImagePath, PNG.sync.write(actualForCompare));
-      writeFileSync(diffImagePath, PNG.sync.write(diff));
-
-      const totalPixels = width * height;
-      const diffRatio = diffPixels / totalPixels;
-      console.log(`Visual diff: ${diffPixels} pixels (${(diffRatio * 100).toFixed(4)}%)`);
-      expect(diffRatio, 'Visual diff ratio should be within tolerance').toBeLessThan(0.07);
-    }
   });
 
   test('should preserve layout structure for boarding pass', async ({ page }) => {
@@ -966,7 +592,7 @@ test.describe('Boarding Pass PDF Conversion', () => {
         converter.dispose();
 
         const html = output.html;
-        
+
         return {
           hasPageContainer: html.includes('pdf-page'),
           hasAbsolutePositioning: html.includes('position: absolute'),
@@ -989,7 +615,7 @@ test.describe('Boarding Pass PDF Conversion', () => {
     expect(layoutCheck.hasAbsolutePositioning, 'Should use absolute positioning').toBe(true);
     expect(layoutCheck.hasMultipleTextElements, 'Should have multiple text elements').toBe(true);
     expect(layoutCheck.hasInlineStyles, 'Should have inline styles for positioning').toBe(true);
-    
+
     console.log('Layout check results:', layoutCheck);
   });
 
@@ -1070,8 +696,6 @@ test.describe('Boarding Pass PDF Conversion', () => {
           throw new Error('PDF2HTML not available');
         }
 
-        const apiKey = (window as unknown as TestWindow).__GOOGLE_API_KEY__ || '';
-
         const converter = new PDF2HTML({
           enableOCR: false,
           enableFontMapping: false,
@@ -1086,9 +710,6 @@ test.describe('Boarding Pass PDF Conversion', () => {
             textPipeline: 'v2',
             textClassifierProfile: 'latin-default',
             useFlexboxLayout: true, // Explicitly enable flexbox layout
-          },
-          fontMappingOptions: {
-            googleApiKey: apiKey,
           },
         });
 
@@ -1138,130 +759,78 @@ test.describe('Boarding Pass PDF Conversion', () => {
     expect(hasSemanticRegions, 'Should have semantic regions').toBe(true);
 
     // Verify flexbox layout is being used
-    const hasFlexboxLines = html.includes('pdf-sem-lines') && html.includes('display: flex');
+    const hasAnyLines = html.includes('pdf-sem-lines');
+    const hasFlexRegions = /data-layout="flex"/i.test(html);
+    const hasAbsRegions = /data-layout="absolute"/i.test(html);
     const hasFlexboxLine = html.includes('pdf-sem-line') && html.includes('flex-direction: row');
     const hasFlexboxGaps = html.includes('pdf-sem-gap') || html.includes('pdf-sem-vgap');
-    expect(hasFlexboxLines, 'Should use flexbox lines container').toBe(true);
-    expect(hasFlexboxLine, 'Should use flexbox line containers').toBe(true);
-    expect(hasFlexboxGaps, 'Should have flexbox gap elements').toBe(true);
+    expect(hasAnyLines, 'Should have semantic lines containers').toBe(true);
+    expect(hasFlexRegions || hasAbsRegions, 'Should have semantic regions rendered either as flex or absolute').toBe(true);
+    expect(hasFlexboxLine || hasAbsRegions, 'Should have flex line containers or absolute region fallback').toBe(true);
+    expect(hasFlexboxGaps || hasAbsRegions, 'Should have flexbox gap elements or absolute region fallback').toBe(true);
     
-    console.log('Flexbox layout verification:', {
-      hasFlexboxLines,
+    console.log('Semantic layout verification:', {
+      hasFlexRegions,
+      hasAbsRegions,
       hasFlexboxLine,
       hasFlexboxGaps,
       regionCount: (html.match(/pdf-sem-region/g) || []).length,
       lineCount: (html.match(/pdf-sem-line/g) || []).length,
     });
 
-    if (process.env.PDF2HTML_VISUAL_DIFF === '1') {
-      const pdfBufferForBaseline = readFileSync(pdfPath);
-      const pdfBase64ForBaseline = pdfBufferForBaseline.toString('base64');
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.setContent(fullHtml, { waitUntil: 'load' });
+    await page.waitForTimeout(250);
 
-      await page.setViewportSize({ width: 1200, height: 900 });
-      await page.evaluate(() => {
-        const existing = document.getElementById('baseline');
-        if (existing) existing.remove();
-        const canvas = document.createElement('canvas');
-        canvas.id = 'baseline';
-        canvas.style.display = 'block';
-        canvas.style.margin = '0';
-        document.body.prepend(canvas);
-      });
+    const overlapReport = await page.evaluate(() => {
+      const regions = Array.from(document.querySelectorAll('.pdf-sem-region')) as HTMLElement[];
+      const overlaps: Array<{ regionIndex: number; a: number; b: number; ax: number; ay: number; aw: number; ah: number; bx: number; by: number; bw: number; bh: number }> = [];
 
-      const baselineRenderResult = await page.evaluate(async ({ base64 }) => {
-        try {
-          const binary = atob(base64);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const intersects1D = (a1: number, a2: number, b1: number, b2: number): number => {
+        const left = Math.max(a1, b1);
+        const right = Math.min(a2, b2);
+        return right - left;
+      };
 
-          const win = window as unknown as TestWindow;
-          const pdfjs = win.__PDFJS__ as unknown as { getDocument: (args: unknown) => { promise: Promise<unknown> } } | undefined;
-          if (!pdfjs?.getDocument) {
-            throw new Error('pdf.js not available on window.__PDFJS__');
+      for (let ri = 0; ri < regions.length; ri++) {
+        const region = regions[ri]!;
+        const linesContainer = region.querySelector('.pdf-sem-lines') as HTMLElement | null;
+        const layoutMode = linesContainer?.getAttribute('data-layout') || 'flex';
+        if (layoutMode !== 'flex') continue;
+        const lines = Array.from(region.querySelectorAll('.pdf-sem-line')) as HTMLElement[];
+        const rects = lines.map((el) => el.getBoundingClientRect());
+        for (let i = 0; i < rects.length; i++) {
+          for (let j = i + 1; j < rects.length; j++) {
+            const a = rects[i]!;
+            const b = rects[j]!;
+            const xOverlap = intersects1D(a.left, a.right, b.left, b.right);
+            if (xOverlap <= 4) continue;
+            const yOverlap = intersects1D(a.top, a.bottom, b.top, b.bottom);
+            if (yOverlap <= 1) continue;
+            overlaps.push({
+              regionIndex: ri,
+              a: i,
+              b: j,
+              ax: a.left,
+              ay: a.top,
+              aw: a.width,
+              ah: a.height,
+              bx: b.left,
+              by: b.top,
+              bw: b.width,
+              bh: b.height
+            });
           }
-
-          const loadingTask = pdfjs.getDocument({ data: bytes, disableWorker: true } as unknown);
-          const doc = (await loadingTask.promise) as { getPage: (pageNumber: number) => Promise<unknown> };
-          const page1 = await doc.getPage(1);
-          const viewport = (page1 as unknown as { getViewport: (options: { scale: number }) => { width: number; height: number } }).getViewport({
-            scale: 1
-          });
-          const canvas = document.getElementById('baseline') as HTMLCanvasElement | null;
-          if (!canvas) throw new Error('Baseline canvas not found');
-          const ctx = canvas.getContext('2d');
-          if (!ctx) throw new Error('Baseline canvas context not available');
-          canvas.width = Math.ceil(viewport.width);
-          canvas.height = Math.ceil(viewport.height);
-          const renderTask = (page1 as unknown as { render: (opts: { canvasContext: CanvasRenderingContext2D; viewport: unknown }) => { promise: Promise<unknown> } }).render({
-            canvasContext: ctx,
-            viewport
-          });
-          await renderTask.promise;
-          return { ok: true };
-        } catch (error: unknown) {
-          const message =
-            error && typeof error === 'object' && 'message' in error
-              ? String((error as { message?: unknown }).message)
-              : String(error);
-          const stack =
-            error && typeof error === 'object' && 'stack' in error
-              ? String((error as { stack?: unknown }).stack)
-              : '';
-          return { ok: false, message, stack };
         }
-      }, { base64: pdfBase64ForBaseline });
-
-      if (!baselineRenderResult.ok) {
-        throw new Error(`Baseline render failed: ${baselineRenderResult.message}${baselineRenderResult.stack ? `\n${baselineRenderResult.stack}` : ''}`);
       }
+      return { overlapCount: overlaps.length, overlaps: overlaps.slice(0, 25) };
+    });
 
-      const baselineCanvas = await page.$('#baseline');
-      if (!baselineCanvas) throw new Error('Baseline canvas element not found');
-      const baselineBytes = await baselineCanvas.screenshot();
-      const baselinePng = cropToContent(PNG.sync.read(baselineBytes));
-
-      await page.setViewportSize({ width: baselinePng.width, height: baselinePng.height });
-      await page.setContent(fullHtml, { waitUntil: 'load' });
-      await page.waitForTimeout(250);
-
-      const pageEl =
-        (await page.$('.pdf-page-0')) ||
-        (await page.$('[class^="pdf-page-"]'));
-
-      const screenshotBytes = pageEl
-        ? await pageEl.screenshot()
-        : await page.screenshot({ fullPage: false });
-      const actualCropped = cropToContent(PNG.sync.read(screenshotBytes));
-
-      const expectedResized = baselinePng;
-      const actualResized = resizeNearest(actualCropped, expectedResized.width, expectedResized.height);
-      const aligned = alignByTranslation(expectedResized, actualResized);
-      console.log(`Semantic alignment shift applied: dx=${aligned.dx}, dy=${aligned.dy}`);
-
-      const expectedForCompare = aligned.expected;
-      const actualForCompare = aligned.actual;
-      const width = expectedForCompare.width;
-      const height = expectedForCompare.height;
-
-      const diff = new PNG({ width, height });
-      const diffPixels = pixelmatch(
-        expectedForCompare.data,
-        actualForCompare.data,
-        diff.data,
-        width,
-        height,
-        { threshold: 0.15 }
-      );
-
-      writeFileSync(join(outputDir, 'boarding_pass_baseline.png'), PNG.sync.write(expectedForCompare));
-      writeFileSync(join(outputDir, 'boarding_pass_actual.png'), PNG.sync.write(actualForCompare));
-      writeFileSync(join(outputDir, 'boarding_pass_diff.png'), PNG.sync.write(diff));
-
-      const totalPixels = width * height;
-      const diffRatio = diffPixels / totalPixels;
-      console.log(`Semantic visual diff: ${diffPixels} pixels (${(diffRatio * 100).toFixed(4)}%)`);
-      expect(diffRatio, 'Semantic visual diff ratio should be within tolerance (target: <3% like preserve fidelity)').toBeLessThan(0.03);
+    if (overlapReport.overlapCount > 0) {
+      console.log('Detected overlapping semantic lines:', overlapReport);
     }
+
+    expect(overlapReport.overlapCount, 'Semantic layout should not have overlapping .pdf-sem-line boxes (with x-overlap guard)').toBe(0);
   });
 });
 

@@ -133,6 +133,210 @@ export class HTMLGenerator {
     return parts.join('\n');
   }
 
+  private applyUnderlineGraphicsToText(page: PDFPage): void {
+    const graphics = page.content.graphics || [];
+    const texts = page.content.text || [];
+    if (graphics.length === 0 || texts.length === 0) return;
+
+    type TextRect = {
+      idx: number;
+      left: number;
+      right: number;
+      top: number;
+      bottom: number;
+      height: number;
+    };
+
+    const textRects: TextRect[] = texts
+      .map((t, idx): TextRect | null => {
+        if (!t || typeof t.x !== 'number' || typeof t.y !== 'number') return null;
+        const w = (typeof t.width === 'number' && Number.isFinite(t.width) && t.width > 0) ? t.width : this.estimateTextWidth(t);
+        const h = (typeof t.height === 'number' && Number.isFinite(t.height) && t.height > 0) ? t.height : Math.max(1, t.fontSize || 12);
+        const abs = this.layoutEngine.transformCoordinates(t.x, t.y, page.height, h);
+        const left = abs.x;
+        const top = abs.y;
+        return {
+          idx,
+          left,
+          right: left + Math.max(0, w),
+          top,
+          bottom: top + Math.max(0, h),
+          height: Math.max(1, h)
+        };
+      })
+      .filter((t): t is TextRect => Boolean(t));
+
+    if (textRects.length === 0) return;
+
+    const removed = new Set<number>();
+
+    for (let gi = 0; gi < graphics.length; gi++) {
+      const g = graphics[gi];
+      if (!g) continue;
+
+      const bounds = this.getGraphicBounds(g);
+      if (!bounds) continue;
+
+      const width = bounds.maxX - bounds.minX;
+      const strokeW = typeof g.strokeWidth === 'number' && Number.isFinite(g.strokeWidth) ? Math.abs(g.strokeWidth) : 1;
+      const height = Math.max(bounds.maxY - bounds.minY, strokeW);
+
+      const maxThickness = Math.max(6.5, strokeW * 4.0);
+      const minLen = Math.max(2, page.width * 0.003);
+      if (width < minLen) continue;
+      if (height > maxThickness) continue;
+      if (width / Math.max(0.35, height) < 8) continue;
+
+      const underlineY = (bounds.minY + bounds.maxY) / 2;
+
+      const matches: Array<{ tr: TextRect; segStart: number; segEnd: number }> = [];
+
+      for (const tr of textRects) {
+        const segStart = Math.max(bounds.minX, tr.left);
+        const segEnd = Math.min(bounds.maxX, tr.right);
+        const overlapX = segEnd - segStart;
+        if (overlapX <= 0) continue;
+
+        const textWidth = Math.max(1, tr.right - tr.left);
+        const overlapRatio = overlapX / Math.max(1, Math.min(width, textWidth));
+        if (overlapRatio < 0.2) continue;
+
+        const tolUp = Math.max(0.8, tr.height * 0.12);
+        const tolDown = Math.max(1.5, tr.height * 0.65);
+        const dy = underlineY - tr.bottom;
+        if (dy < -tolUp || dy > tolDown) continue;
+
+        matches.push({ tr, segStart, segEnd });
+      }
+
+      if (matches.length === 0) continue;
+
+      // Avoid converting table/grid borders: require reasonable text coverage along the underline length.
+      const segments = matches
+        .map((m) => [m.segStart, m.segEnd] as const)
+        .sort((a, b) => a[0] - b[0]);
+      let union = 0;
+      let curStart = segments[0]![0];
+      let curEnd = segments[0]![1];
+      for (let i = 1; i < segments.length; i++) {
+        const [s, e] = segments[i]!;
+        if (s <= curEnd) {
+          curEnd = Math.max(curEnd, e);
+        } else {
+          union += Math.max(0, curEnd - curStart);
+          curStart = s;
+          curEnd = e;
+        }
+      }
+      union += Math.max(0, curEnd - curStart);
+
+      const textSpanMin = Math.min(...matches.map((m) => m.tr.left));
+      const textSpanMax = Math.max(...matches.map((m) => m.tr.right));
+      const textSpanWidth = Math.max(1, textSpanMax - textSpanMin);
+      const coverageOnUnderline = union / Math.max(1, width);
+      const coverageOnSpan = union / textSpanWidth;
+
+      const underlineToTextSpan = width / Math.max(1, textSpanWidth);
+      const looksLikeFillLine = width >= page.width * 0.25 && underlineToTextSpan >= 1.8;
+      if (looksLikeFillLine) continue;
+
+      const looksLikeLongSeparator = width >= page.width * 0.45 && coverageOnUnderline < 0.5 && coverageOnSpan < 0.65;
+      if (looksLikeLongSeparator) continue;
+
+      for (const m of matches) {
+        const t = texts[m.tr.idx];
+        if (t && t.textDecoration !== 'underline') {
+          (t as unknown as { textDecoration?: PDFTextContent['textDecoration'] }).textDecoration = 'underline';
+        }
+      }
+
+      removed.add(gi);
+    }
+
+    if (removed.size > 0) {
+      page.content.graphics = graphics.filter((_, i) => !removed.has(i));
+    }
+  }
+
+  private getGraphicBounds(graphic: PDFGraphicsContent): { minX: number; minY: number; maxX: number; maxY: number } | null {
+    if (graphic.type === 'path' && typeof graphic.path === 'string' && graphic.path.length > 0) {
+      return this.getPathBounds(graphic.path);
+    }
+
+    if ((graphic.type === 'rectangle' || graphic.type === 'line') &&
+      typeof graphic.x === 'number' &&
+      typeof graphic.y === 'number' &&
+      typeof graphic.width === 'number' &&
+      typeof graphic.height === 'number') {
+      const x1 = graphic.x;
+      const y1 = graphic.y;
+      const x2 = graphic.x + graphic.width;
+      const y2 = graphic.y + graphic.height;
+      return {
+        minX: Math.min(x1, x2),
+        minY: Math.min(y1, y2),
+        maxX: Math.max(x1, x2),
+        maxY: Math.max(y1, y2)
+      };
+    }
+
+    return null;
+  }
+
+  private getPathBounds(path: string): { minX: number; minY: number; maxX: number; maxY: number } | null {
+    const matches = path.match(/-?\d*\.?\d+(?:e[+-]?\d+)?/gi);
+    if (!matches || matches.length < 4) return null;
+
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+
+    for (let i = 0; i + 1 < matches.length; i += 2) {
+      const x = Number(matches[i]);
+      const y = Number(matches[i + 1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return null;
+    }
+    return { minX, minY, maxX, maxY };
+  }
+
+  private computeLineBoxFromRuns(
+    runs: PDFTextContent[],
+    pageHeight: number,
+    regionTop: number,
+    absLineHeightFactor: number
+  ): { lineTopRel: number; lineHeight: number; lineBottomRel: number } {
+    let minTop = Number.POSITIVE_INFINITY;
+    let maxBottom = Number.NEGATIVE_INFINITY;
+
+    for (const r of runs) {
+      if (!r || typeof r.x !== 'number' || typeof r.y !== 'number') continue;
+      const h = Math.max(1, this.normalizeCoord(this.calculateVisualHeight(r, absLineHeightFactor)));
+      const abs = this.layoutEngine.transformCoordinates(r.x, r.y, pageHeight, h);
+      const top = abs.y;
+      const bottom = top + h;
+      if (top < minTop) minTop = top;
+      if (bottom > maxBottom) maxBottom = bottom;
+    }
+
+    if (!Number.isFinite(minTop) || !Number.isFinite(maxBottom) || maxBottom <= minTop) {
+      return { lineTopRel: 0, lineHeight: 1, lineBottomRel: 1 };
+    }
+
+    const lineTopRel = this.normalizeCoord(minTop - regionTop);
+    const lineHeight = Math.max(1, this.normalizeCoord(maxBottom - minTop));
+    const lineBottomRel = this.normalizeCoord(lineTopRel + lineHeight);
+    return { lineTopRel, lineHeight, lineBottomRel };
+  }
+
   private generatePositionedSemanticText(page: PDFPage, fontMappings: FontMapping[]): string {
     return this.generateSemanticPositionedText(page, fontMappings);
   }
@@ -445,6 +649,7 @@ export class HTMLGenerator {
             fontWeight: run.fontWeight,
             fontStyle: run.fontStyle,
             color: run.color,
+            textDecoration: run.textDecoration,
             rotation: run.rotation,
             fontInfo: undefined
           }))
@@ -465,9 +670,6 @@ export class HTMLGenerator {
       html.push(
         `<div class="pdf-sem-region" style="position: absolute; left: ${regionLeft}px; top: ${regionTop}px; width: ${regionWidth}px; height: ${regionHeight}px;" data-x="${regionLeft}" data-top="${regionTop}" data-width="${regionWidth}" data-height="${regionHeight}" data-flow="${region.flowAllowed ? '1' : '0'}">`
       );
-
-      // Lines container (flexbox column)
-      html.push('<div class="pdf-sem-lines" style="display: flex; flex-direction: column; align-items: flex-start; gap: 0; width: 100%;">');
 
       const renderFlexLine = (mergedRuns: PDFTextContent[], lineHeight: number): void => {
         html.push(
@@ -572,6 +774,109 @@ export class HTMLGenerator {
         if (Math.abs(yDiff) > 0.5) return yDiff;
         return a.minX - b.minX;
       });
+
+      const lineLooksStructuredAnyStyle = (line: (typeof orderedLines)[number]): boolean => {
+        const runs = line.items.filter((r) => (r.text || '').trim().length > 0);
+        if (runs.length < 2) return false;
+        const sorted = [...runs].sort((a, b) => a.x - b.x);
+        for (let i = 0; i < sorted.length - 1; i++) {
+          const cur = sorted[i]!;
+          const next = sorted[i + 1]!;
+          const curWidth = typeof cur.width === 'number' && Number.isFinite(cur.width) && cur.width > 0 ? cur.width : this.estimateTextWidth(cur);
+          const gap = next.x - (cur.x + curWidth);
+          const fontSize = (typeof cur.fontSize === 'number' && Number.isFinite(cur.fontSize) && cur.fontSize > 0) ? cur.fontSize : 12;
+          const gapThreshold = Math.max(22, fontSize * 2.6, regionWidth * 0.08);
+          if (gap >= gapThreshold) return true;
+        }
+        return false;
+      };
+
+      const rectIntersects = (a: { left: number; top: number; width: number; height: number }, b: { left: number; top: number; width: number; height: number }): boolean => {
+        return a.left < b.left + b.width && a.left + a.width > b.left && a.top < b.top + b.height && a.top + a.height > b.top;
+      };
+
+      const borderLikeGraphicsCount = (() => {
+        const regionRect = { left: regionLeft, top: regionTop, width: regionWidth, height: regionHeight };
+        let count = 0;
+        for (const g of page.content.graphics || []) {
+          const b = this.getGraphicBounds(g);
+          if (!b) continue;
+          const w = b.maxX - b.minX;
+          const h = b.maxY - b.minY;
+          const gb = { left: b.minX, top: b.minY, width: Math.max(0, w), height: Math.max(0, h) };
+          if (!rectIntersects(gb, regionRect)) continue;
+          const thick = Math.max(Math.max(0, w), Math.max(0, h)) >= 12 && Math.min(Math.max(0, w), Math.max(0, h)) >= 1;
+          if (thick) count += 1;
+        }
+        return count;
+      })();
+
+      const regionHasVerticalOverlaps = (() => {
+        let prevBottom: number | null = null;
+        for (const line of orderedLines) {
+          const mergedRuns: PDFTextContent[] = getMergedRunsForLine(line);
+          const lineBox = this.computeLineBoxFromRuns(mergedRuns, page.height, regionTop, absLineHeightFactor);
+          const maxRunHeight = mergedRuns.reduce((acc, r) => {
+            const h = this.normalizeCoord(Math.max(1, this.calculateVisualHeight(r, absLineHeightFactor)));
+            return Math.max(acc, h);
+          }, 1);
+          const maxFontSize = mergedRuns.reduce((acc, r) => {
+            const fs = typeof r.fontSize === 'number' && Number.isFinite(r.fontSize) ? r.fontSize : 12;
+            return Math.max(acc, fs);
+          }, 1);
+          const top = Math.max(0, lineBox.lineTopRel);
+          const height = Math.max(lineBox.lineHeight, maxRunHeight);
+          const bottom = this.normalizeCoord(top + height);
+          if (prevBottom !== null) {
+            const overlap = prevBottom - top;
+            const overlapThreshold = Math.max(3, maxFontSize * 0.35);
+            if (overlap > overlapThreshold) return true;
+          }
+          prevBottom = bottom;
+        }
+        return false;
+      })();
+
+      const forceAbsoluteRegion =
+        region.overlapsObstacle ||
+        borderLikeGraphicsCount >= 2 ||
+        orderedLines.some((l) => lineLooksStructuredAnyStyle(l)) ||
+        regionHasVerticalOverlaps;
+
+      if (forceAbsoluteRegion) {
+        html.push('<div class="pdf-sem-lines" data-layout="absolute" style="position: relative; width: 100%; height: 100%;">');
+        for (const line of orderedLines) {
+          const mergedRuns: PDFTextContent[] = getMergedRunsForLine(line);
+          const lineBox = this.computeLineBoxFromRuns(mergedRuns, page.height, regionTop, absLineHeightFactor);
+          const lineTopRel = Math.max(0, lineBox.lineTopRel);
+          const maxRunHeight = mergedRuns.reduce((acc, r) => {
+            const h = this.normalizeCoord(Math.max(1, this.calculateVisualHeight(r, absLineHeightFactor)));
+            return Math.max(acc, h);
+          }, 1);
+          const lineHeight = Math.max(lineBox.lineHeight, maxRunHeight);
+          html.push(
+            `<div class="pdf-sem-line" style="position: absolute; left: 0; top: ${lineTopRel}px; width: ${regionWidth}px; height: ${lineHeight}px;">`
+          );
+          for (const run of mergedRuns) {
+            const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+            const visualHeight = this.calculateVisualHeight(run, absLineHeightFactor);
+            const runHeight = Math.max(1, this.normalizeCoord(visualHeight));
+            const abs = this.layoutEngine.transformCoordinates(run.x, run.y, page.height, runHeight);
+            const rel = {
+              x: this.normalizeCoord(abs.x - regionLeft),
+              y: this.normalizeCoord(abs.y - regionTop - lineTopRel)
+            };
+            const runForRender: PDFTextContent = { ...run, height: runHeight };
+            html.push(this.layoutEngine.generateTextElement(runForRender, page.height, fontClass, { coordsOverride: rel }));
+          }
+          html.push('</div>');
+        }
+        html.push('</div>');
+        html.push('</div>');
+        continue;
+      }
+
+      html.push('<div class="pdf-sem-lines" data-layout="flex" style="display: flex; flex-direction: column; align-items: flex-start; gap: 0; width: 100%;">');
 
       let prevLineBottomRel: number | null = null;
 
@@ -750,20 +1055,21 @@ export class HTMLGenerator {
           const line = orderedLines[lineIdx]!;
           const mergedRuns: PDFTextContent[] = getMergedRunsForLine(line);
 
-          const lineTopRel = this.normalizeCoord(line.rect.top - regionTop);
-          const lineHeight = Math.max(
-            1,
-            this.normalizeCoord(
-              Math.max(
-                line.rect.height,
-                (typeof line.avgFontSize === 'number' && Number.isFinite(line.avgFontSize) && line.avgFontSize > 0
-                  ? line.avgFontSize
-                  : 12) * absLineHeightFactor
-              )
-            )
-          );
+          const lineBox = this.computeLineBoxFromRuns(mergedRuns, page.height, regionTop, absLineHeightFactor);
+          const lineTopRel = lineBox.lineTopRel;
+          const maxRunHeight = mergedRuns.reduce((acc, r) => {
+            const h = this.normalizeCoord(Math.max(1, this.calculateVisualHeight(r, absLineHeightFactor)));
+            return Math.max(acc, h);
+          }, 1);
+          const lineHeight = Math.max(lineBox.lineHeight, maxRunHeight);
+          const lineBottomRel = lineBox.lineBottomRel;
 
-          if (lineIdx > 0 && prevLineBottomRel !== null) {
+          if (prevLineBottomRel === null) {
+            const vGap = this.normalizeCoord(lineTopRel);
+            if (vGap > minGapPx) {
+              html.push(`<div class="pdf-sem-vgap" style="height: ${vGap}px; flex-shrink: 0; width: 100%;"></div>`);
+            }
+          } else {
             const vGap = this.normalizeCoord(lineTopRel - prevLineBottomRel);
             if (vGap > minGapPx) {
               flush(group);
@@ -778,7 +1084,7 @@ export class HTMLGenerator {
             if (mergedRuns.length > 0) {
               renderFlexLine(mergedRuns, lineHeight);
             }
-            prevLineBottomRel = this.normalizeCoord(lineTopRel + lineHeight);
+            prevLineBottomRel = lineBottomRel;
             continue;
           }
 
@@ -794,7 +1100,7 @@ export class HTMLGenerator {
             flush(group);
             group = null;
             renderFlexLine(mergedRuns, lineHeight);
-            prevLineBottomRel = this.normalizeCoord(lineTopRel + lineHeight);
+            prevLineBottomRel = lineBottomRel;
             continue;
           }
 
@@ -812,7 +1118,7 @@ export class HTMLGenerator {
             };
           } else {
             group!.runHeight = Math.max(group!.runHeight, runHeight);
-            group!.reservedHeight = this.normalizeCoord(group!.reservedHeight + lineHeight);
+            group!.reservedHeight = this.normalizeCoord(Math.max(group!.reservedHeight, lineBottomRel - group!.lineTopRel));
             for (const seg of lineSegments) {
               if (seg.kind === 'space') {
                 group!.segments.push(seg);
@@ -822,7 +1128,7 @@ export class HTMLGenerator {
             }
           }
 
-          prevLineBottomRel = this.normalizeCoord(lineTopRel + lineHeight);
+          prevLineBottomRel = lineBottomRel;
         }
 
         flush(group);
@@ -838,21 +1144,22 @@ export class HTMLGenerator {
         // mergedRuns are TextRun[] which have the same structure as PDFTextContent
         const mergedRuns: PDFTextContent[] = getMergedRunsForLine(line);
 
-        const lineTopRel = this.normalizeCoord(line.rect.top - regionTop);
-        const lineHeight = Math.max(
-          1,
-          this.normalizeCoord(
-            Math.max(
-              line.rect.height,
-              (typeof line.avgFontSize === 'number' && Number.isFinite(line.avgFontSize) && line.avgFontSize > 0
-                ? line.avgFontSize
-                : 12) * absLineHeightFactor
-            )
-          )
-        );
+        const lineBox = this.computeLineBoxFromRuns(mergedRuns, page.height, regionTop, absLineHeightFactor);
+        const lineTopRel = lineBox.lineTopRel;
+        const maxRunHeight = mergedRuns.reduce((acc, r) => {
+          const h = this.normalizeCoord(Math.max(1, this.calculateVisualHeight(r, absLineHeightFactor)));
+          return Math.max(acc, h);
+        }, 1);
+        const lineHeight = Math.max(lineBox.lineHeight, maxRunHeight);
+        const lineBottomRel = lineBox.lineBottomRel;
 
-        // Calculate vertical gap before this line (region-relative, already in HTML coordinates)
-        if (lineIdx > 0 && prevLineBottomRel !== null) {
+        // Calculate vertical gap before this line (region-relative)
+        if (prevLineBottomRel === null) {
+          const vGap = this.normalizeCoord(lineTopRel);
+          if (vGap > minGapPx) {
+            html.push(`<div class="pdf-sem-vgap" style="height: ${vGap}px; flex-shrink: 0; width: 100%;"></div>`);
+          }
+        } else {
           const vGap = this.normalizeCoord(lineTopRel - prevLineBottomRel);
           if (vGap > minGapPx) {
             html.push(`<div class="pdf-sem-vgap" style="height: ${vGap}px; flex-shrink: 0; width: 100%;"></div>`);
@@ -973,7 +1280,7 @@ export class HTMLGenerator {
 
         html.push('</div>'); // Close line container
 
-        prevLineBottomRel = this.normalizeCoord(lineTopRel + lineHeight);
+        prevLineBottomRel = lineBottomRel;
       }
 
       html.push('</div>'); // Close lines container
@@ -1068,6 +1375,10 @@ export class HTMLGenerator {
     fontMappings: FontMapping[]
   ): string {
     const parts: string[] = [];
+
+    if (this.options.preserveLayout && this.options.textLayout === 'semantic') {
+      this.applyUnderlineGraphicsToText(page);
+    }
 
     const pageClass = this.options.preserveLayout
       ? `pdf-page pdf-page-${page.pageNumber}`
@@ -1447,6 +1758,16 @@ export class HTMLGenerator {
             1,
             Math.round(Math.max(line.rect.height, avgFontSize * (this.options.layoutTuning?.absLineHeightFactor ?? 1.25)) * 1000) / 1000
           );
+
+          const nextLine = lineIndex < orderedLines.length - 1 ? orderedLines[lineIndex + 1] : null;
+          const nextLineTop = nextLine
+            ? Math.max(0, Math.round((nextLine.rect.top - region.rect.top) * 1000) / 1000)
+            : null;
+          const maxHeightBeforeNext = nextLineTop !== null ? Math.max(0, nextLineTop - lineTop) : null;
+          const effectiveLineHeight =
+            maxHeightBeforeNext !== null && maxHeightBeforeNext > 0.5
+              ? Math.max(1, Math.min(lineHeight, maxHeightBeforeNext))
+              : lineHeight;
           const mergedRuns = this.mergeTextRuns(line.items);
 
           const canRelativeRebuild = passes >= 2 && !line.hasRotation;
@@ -1457,7 +1778,7 @@ export class HTMLGenerator {
               this.absGapCssInjected = true;
             }
             html.push(
-              `<div class="pdf-abs-line" style="position: absolute; left: 0; top: ${lineTop}px; width: ${width}px; height: ${lineHeight}px; white-space: pre; line-height: ${lineHeight}px;">`
+              `<div class="pdf-abs-line" style="position: absolute; left: 0; top: ${lineTop}px; width: ${width}px; height: ${effectiveLineHeight}px; white-space: pre; line-height: ${effectiveLineHeight}px;">`
             );
 
             let cursorX = 0;
@@ -1478,7 +1799,7 @@ export class HTMLGenerator {
             html.push('</div>');
           } else {
             html.push(
-              `<div class="pdf-abs-line" style="position: absolute; left: 0; top: ${lineTop}px; width: ${width}px; height: ${lineHeight}px;">`
+              `<div class="pdf-abs-line" style="position: absolute; left: 0; top: ${lineTop}px; width: ${width}px; height: ${effectiveLineHeight}px;">`
             );
 
             for (const run of mergedRuns) {
@@ -1862,7 +2183,7 @@ export class HTMLGenerator {
         return graphic.path ? `<path d="${graphic.path}" ${attrString} />` : '';
 
       case 'rectangle':
-        return graphic.x !== undefined && graphic.y !== undefined && graphic.width && graphic.height
+        return graphic.x !== undefined && graphic.y !== undefined && typeof graphic.width === 'number' && typeof graphic.height === 'number'
           ? `<rect x="${graphic.x}" y="${graphic.y}" width="${graphic.width}" height="${graphic.height}" ${attrString} />`
           : '';
 
@@ -1872,7 +2193,7 @@ export class HTMLGenerator {
           : '';
 
       case 'line':
-        return graphic.x !== undefined && graphic.y !== undefined && graphic.width && graphic.height
+        return graphic.x !== undefined && graphic.y !== undefined && typeof graphic.width === 'number' && typeof graphic.height === 'number'
           ? `<line x1="${graphic.x}" y1="${graphic.y}" x2="${graphic.x + graphic.width}" y2="${graphic.y + graphic.height}" ${attrString} />`
           : '';
 

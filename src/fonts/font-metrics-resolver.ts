@@ -9,6 +9,29 @@ export type ResolvedFontMatch = {
   reason: 'alias' | 'metrics' | 'fallback';
 };
 
+function isProbablyRealFontUnitMetrics(metrics: DetectedFont['metrics']): boolean {
+  if (!metrics) return false;
+
+  const nums = [
+    metrics.ascent,
+    metrics.descent,
+    metrics.capHeight,
+    metrics.xHeight,
+    metrics.averageWidth,
+    metrics.maxWidth
+  ].filter((v) => typeof v === 'number' && Number.isFinite(v));
+
+  if (nums.length < 4) return false;
+
+  const max = Math.max(...nums.map((v) => Math.abs(v)));
+  const min = Math.min(...nums.map((v) => Math.abs(v)));
+  if (max < 150) return false;
+  if (max > 5000) return false;
+  if (min === 0 && max < 250) return false;
+
+  return true;
+}
+
 function clamp01(v: number): number {
   if (v <= 0) return 0;
   if (v >= 1) return 1;
@@ -68,8 +91,11 @@ export class FontMetricsResolver {
     }
 
     const metrics = opts?.metrics;
-    if (metrics) {
-      return this.resolveByMetrics(metrics);
+    if (metrics && isProbablyRealFontUnitMetrics(metrics)) {
+      const byMetrics = this.resolveByMetrics(metrics);
+      if (byMetrics.reason !== 'fallback') {
+        return byMetrics;
+      }
     }
 
     const fallback = this.pickFallbackForName(key);
@@ -80,7 +106,7 @@ export class FontMetricsResolver {
     const byName = this.resolveByName(font.family || font.name, { metrics: font.metrics });
     if (byName.reason === 'alias') return byName;
 
-    if (font.metrics) {
+    if (font.metrics && isProbablyRealFontUnitMetrics(font.metrics)) {
       const byMetrics = this.resolveByMetrics(font.metrics);
       if (byMetrics.score > byName.score) return byMetrics;
     }
@@ -117,12 +143,20 @@ export class FontMetricsResolver {
     }
 
     const fallback = this.pickFallbackForMetrics({ ascent, descent, averageWidth, maxWidth });
-    const chosen = best ?? fallback;
+    const confidenceThreshold = 0.55;
+    const score = clamp01(bestScore);
+    if (!best || score < confidenceThreshold) {
+      return {
+        record: fallback,
+        score: 0.5,
+        reason: 'fallback'
+      };
+    }
 
     return {
-      record: chosen,
-      score: clamp01(bestScore),
-      reason: best ? 'metrics' : 'fallback'
+      record: best,
+      score,
+      reason: 'metrics'
     };
   }
 

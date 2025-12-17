@@ -93,24 +93,16 @@ test.describe('PDF to HTML Conversion', () => {
           if (!PDF2HTML) {
             throw new Error('PDF2HTML not available');
           }
-          
-          // Get API key from environment (injected by Vite)
-          const apiKey = (window as any).__GOOGLE_API_KEY__ || 
-                        (import.meta as any).env?.GOOGLE_API_KEY || 
-                        '';
 
           // Create converter
           const converter = new PDF2HTML({
             enableOCR: false, // Disable for faster tests
-            enableFontMapping: true,
+            enableFontMapping: false,
             htmlOptions: {
               format: 'html+inline-css',
               preserveLayout: true,
               responsive: true,
               darkMode: false,
-            },
-            fontMappingOptions: {
-              googleApiKey: apiKey,
             },
           });
 
@@ -252,7 +244,7 @@ test.describe('PDF to HTML Conversion', () => {
         }
         const converter = new PDF2HTML({
           enableOCR: false,
-          enableFontMapping: true,
+          enableFontMapping: false,
         });
         
         const output = await converter.convert(arrayBuffer, (progress: any) => {

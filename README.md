@@ -1,212 +1,213 @@
-# PDF2HTML Client
+# pdf2html-client
 
-A modern, client-side PDF parsing library with WASM optimizations, OCR integration, and intelligent font mapping.
+Client-side PDF to HTML conversion with WASM parsing, optional OCR, and multiple layout strategies ranging from high-fidelity positioning to editable/semantic HTML.
 
-## Features
+## Why another PDF to HTML Library?
 
-- 🚀 **WASM-Optimized**: High-performance PDF parsing using PDFium compiled to WebAssembly
-- 🔍 **OCR Support**: Client-side OCR using onnxruntime-web and OpenCV.js for scanned documents
-- 🎨 **Font Mapping**: Automatic detection and mapping to Google Fonts equivalents
-- 📄 **Comprehensive Support**: Text, images, vector graphics, forms, and annotations
-- ⚡ **Fast & Efficient**: Streaming processing with parallel page handling
-- 🎯 **Type-Safe**: Full TypeScript support with comprehensive type definitions
-- 🧪 **Well-Tested**: Comprehensive test suite with unit and integration tests
-- 🎨 **Modern UI**: Demo application with React
+ This library was built primarily to support high fidelity PDF/DOCX imports in [Venmail Drive](https://venia.cloud). Most PDF-to-HTML pipelines pick one tradeoff: either pixel-perfect output that is hard to edit, or “flow” output that drifts and overlaps. The goal is to provide a one-stop simple workflow for document imports that works with offline-first applications.
+
+`pdf2html-client` is built around a multi-mode text layout engine:
+
+- **High fidelity when you need it** (absolute/smart positioned text)
+- **Editability when you want it** (flow/outline-flow)
+- **Semantic structure with layout awareness** (semantic regions + flexbox)
+- **Overlap-aware fallbacks** for sensitive areas where reflow would break readability
+
+All of this runs in the browser (via pdfium or unpdf).
+
+## Core capabilities
+
+- **WASM PDF parsing**
+  - Primary: PDFium (WebAssembly)
+  - Fallback/alternative: `unpdf` (WIP))
+  - Select via `parserStrategy: 'auto' | 'pdfium' | 'unpdf'`
+- **Multiple text layout modes** (see below)
+- **Optional OCR for scanned PDFs**
+  - Uses `onnxruntime-web` + OpenCV.js
+  - Automatically detects scanned PDFs and only runs OCR when it makes sense
+- **Font detection + mapping**
+  - Detects fonts from extracted text
+  - Maps fonts using an internal font catalog
+- **Output formats**
+  - `html`, `css`, plus metadata (processing time, page count, OCR used, font mappings, image stats)
 
 ## Installation
 
 ```bash
-pnpm install pdf2html-client
+pnpm add pdf2html-client
 ```
 
-### Download OCR Models
+### OCR models (optional)
 
-The library uses PPU-Paddle-OCR models for fast, lightweight OCR. Download the required models:
+If you enable OCR, you should download the lightweight OCR models ahead of time:
 
 ```bash
 pnpm run download-models
 ```
 
-This will download the following models to the `models/` directory:
-- `PP-OCRv5_mobile_det_infer.onnx` - Text detection model (~4.8MB)
-- `en_PP-OCRv4_mobile_rec_infer.onnx` - Text recognition model (~7.7MB)
-- `en_dict.txt` - English character dictionary
+This downloads models into `models/`.
 
-**Note**: Models are automatically downloaded on first use if not found locally. For production, it's recommended to download them during build time.
+## Quick start
 
-## Quick Start
-
-```typescript
+```ts
 import { PDF2HTML } from 'pdf2html-client';
 
 const converter = new PDF2HTML({
-  enableOCR: true,
-  enableFontMapping: true,
-  preserveLayout: true,
+  enableOCR: false,
+  enableFontMapping: false,
+  parserStrategy: 'auto',
   htmlOptions: {
     format: 'html+inline-css',
-    responsive: true,
-    darkMode: false
+    preserveLayout: true,
+    responsive: false,
+    darkMode: false,
+    imageFormat: 'base64',
+    textLayout: 'smart',
+    textLayoutPasses: 2,
+    textPipeline: 'v2',
+    includeExtractedText: true
   }
 });
 
-// Convert from File
-const html = await converter.convert(pdfFile);
-
-// Convert from ArrayBuffer
-const html = await converter.convert(pdfArrayBuffer);
-
-// With progress tracking
-const html = await converter.convert(pdfFile, (progress) => {
-  console.log(`${progress.stage}: ${progress.progress}%`);
+const out = await converter.convert(pdfFile, (p) => {
+  console.log(`${p.stage}: ${p.progress}%`);
 });
+
+console.log(out.html);
+console.log(out.css);
+console.log(out.metadata);
+
+converter.dispose();
 ```
 
-## Configuration
+## Output
 
-```typescript
-interface PDF2HTMLConfig {
-  // OCR settings
-  enableOCR: boolean;
-  ocrConfig?: {
-    confidenceThreshold: number;
-    language?: string;
-    preprocess?: boolean;
-    autoRotate?: boolean;
-  };
+`convert()` returns an `HTMLOutput`:
 
-  // Font mapping
-  enableFontMapping: boolean;
-  fontMappingOptions?: {
-    strategy: 'exact' | 'similar' | 'fallback';
-    similarityThreshold: number;
-    cacheEnabled: boolean;
-  };
+- **`html`**: Generated markup
+- **`css`**: Generated styles
+- **`metadata`**: Page count, processing time, OCR usage, font mapping count, scan detection, and image stats
+- **`fonts`**: Font families referenced by output
+- **`text`** *(optional)*: Extracted text (when `htmlOptions.includeExtractedText` is enabled)
 
-  // Output options
-  htmlOptions?: {
-    format: 'html' | 'html+css' | 'html+inline-css';
-    preserveLayout: boolean;
-    responsive: boolean;
-    darkMode: boolean;
-    baseUrl?: string;
-    imageFormat: 'base64' | 'url';
-  };
+## Text layout modes
 
-  // Performance
-  maxConcurrentPages?: number;
-  wasmMemoryLimit?: number;
-  cacheEnabled?: boolean;
-}
-```
+Set `htmlOptions.textLayout`:
 
-## Development
+### `absolute`
 
-### Setup
+Best for maximum positional fidelity. Produces positioned text elements for precise placement.
 
-```bash
-pnpm install
-```
+### `smart`
 
-### Build
+Positioned output with additional grouping/merging heuristics to reduce fragmentation while maintaining fidelity.
 
-```bash
-pnpm run build
-```
+### `flow`
 
-### Testing
+Two behaviors depending on `htmlOptions.preserveLayout`:
 
-#### Unit Tests
+- **`preserveLayout: true`**
+  - Produces “outline-flow” HTML that aims to be editable while still matching layout constraints.
+- **`preserveLayout: false`**
+  - Produces semantic HTML (paragraphs/headings/lists) for maximum reflow/editability.
 
-```bash
-pnpm test
-pnpm run test:coverage
-pnpm run test:ui
-```
+### `semantic`
 
-#### Test with Real PDFs
+Produces semantic regions/lines designed for editing while still anchored to the original PDF layout.
 
-```bash
-# Test all PDFs in demo/pdfs
-pnpm run test:pdfs
+When `preserveLayout: true`, semantic mode renders positioned regions and then uses:
 
-# Analyze a specific PDF
-pnpm run analyze-pdf path-to-sample-pdf
-```
+- **Flexbox line layout** (when safe)
+- **Automatic fallback to absolute positioning** when overlap risk or sensitive geometry is detected
 
-See [TESTING_GUIDE.md](./TESTING_GUIDE.md) for detailed testing instructions.
+This is the mode targeted at preventing “vertical overlaps” without losing fidelity.
 
-### Demo
+### `textRenderMode: 'svg'`
+
+For special cases, you can render text through an SVG text layer when `preserveLayout` is enabled.
+
+## Configuration reference
+
+The top-level constructor takes `PDF2HTMLConfig`.
+
+### OCR
+
+- `enableOCR: boolean`
+- `ocrConfig?: { confidenceThreshold: number; language?: string; preprocess?: boolean; autoRotate?: boolean }`
+- `ocrProcessorOptions?: { batchSize?: number; maxConcurrent?: number; timeout?: number }`
+
+OCR only runs when the document is detected as scanned.
+
+### Font mapping
+
+- `enableFontMapping: boolean`
+- `fontMappingOptions?: { strategy: 'exact' | 'similar' | 'fallback'; similarityThreshold: number; cacheEnabled: boolean }`
+
+### Parser
+
+- `parserStrategy?: 'auto' | 'pdfium' | 'unpdf'`
+- `parserOptions?: { extractText: boolean; extractImages: boolean; extractGraphics: boolean; extractForms: boolean; extractAnnotations: boolean }`
+
+### HTML generation
+
+`htmlOptions?: HTMLGenerationOptions` (high-level knobs):
+
+- `format: 'html' | 'html+css' | 'html+inline-css'`
+- `preserveLayout: boolean`
+- `responsive: boolean`
+- `darkMode: boolean`
+- `imageFormat: 'base64' | 'url'`
+- `textLayout?: 'absolute' | 'smart' | 'flow' | 'semantic'`
+- `textLayoutPasses?: 1 | 2`
+- `textRenderMode?: 'html' | 'svg'`
+- `textPipeline?: 'legacy' | 'v2'`
+- `includeExtractedText?: boolean`
+- `textClassifierProfile?: string`
+- `semanticLayout?: { blockGapFactor?: number; headingThreshold?: number; maxHeadingLength?: number }`
+- `useFlexboxLayout?: boolean`
+
+### Performance
+
+- `maxConcurrentPages?: number` (default: 4)
+- `cacheEnabled?: boolean`
+- `wasmMemoryLimit?: number`
+
+## Demo
 
 ```bash
 pnpm run demo
 ```
 
-## Project Structure
+## Testing
 
-```
-pdf2html-client/
-├── src/
-│   ├── core/          # PDF parsing (PDFium & pdf.js wrappers)
-│   ├── ocr/           # OCR integration
-│   ├── fonts/         # Font detection and mapping
-│   ├── html/          # HTML generation
-│   └── types/         # TypeScript type definitions
-├── demo/              # React demo application
-├── tests/             # Test suite
-└── dist/              # Built output
+```bash
+pnpm test
+pnpm run test:browser
 ```
 
-## Architecture
+Browser tests are designed to catch layout regressions, especially **text overlaps** in semantic layouts.
 
-The library follows a modular architecture with clear separation of concerns:
+## Project structure
 
-1. **PDF Parsing**: Uses PDFium (WASM) as primary parser with pdf.js fallback
-2. **OCR Processing**: Direct OCR implementation using onnxruntime-web and @techstark/opencv-js based on PPU-Paddle-OCR
-3. **Font Detection**: Analyzes PDF font dictionaries and metrics
-4. **Font Mapping**: Maps detected fonts to Google Fonts equivalents
-5. **HTML Generation**: Generates semantic HTML with CSS styling
+```
+src/
+  core/      PDF parsing + layout analysis
+  html/      HTML/CSS generation + layout engines
+  fonts/     Font detection + mapping
+  ocr/       OCR engine + processing
+  types/     Public types
+demo/        React demo app
+tests/       Unit + browser tests
+```
 
-## Implementation Status
+## Roadmap
 
-### ✅ Completed
-- Project setup and configuration
-- Type definitions
-- Core PDF parser architecture (PDFium + PDF.js)
-- OCR integration
-- Font detection and mapping
-- HTML generation
-- CSS generation
-- Layout preservation
-- Test suite framework
-- Demo application
-- Testing tools and scripts
-
-### ⚠️ Known Issues
-See [IMPLEMENTATION_REVIEW.md](./IMPLEMENTATION_REVIEW.md) for detailed analysis.
-
-**Critical Issues:**
-- OCR results not merged into output
-- Image extraction incomplete
-- Google Fonts API key required
-
-See [CRITICAL_FIXES.md](./CRITICAL_FIXES.md) for fixes needed.
-
-### 🚧 In Progress / TODO
-- Vector graphics conversion (SVG)
-- Form field extraction and rendering
-- Annotation support
-- Enhanced table detection
-- Advanced image extraction
-- Memory optimization for large PDFs
-
-## Contributing
-
-Contributions are welcome! Please ensure:
-- All files stay under 1000 lines
-- Code follows TypeScript strict mode
-- Tests are included for new features
-- Documentation is updated
+- Finish PDFJS Fallback
+- Add more font mappings
+- Better tables (structure + export)
+- Richer forms/annotations rendering
+- Expanded vector graphics support
+- More layout profiles and tuning presets
 
 ## License
 

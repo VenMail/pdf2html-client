@@ -29,7 +29,10 @@
     "lint": "eslint src --ext ts,tsx",
     "type-check": "tsc --noEmit",
     "demo": "vite --config vite.demo.config.ts",
+    "publish:npm": "pnpm run build && tsx scripts/publish-npm.ts",
     "download-models": "tsx scripts/download-models.ts",
+    "update-font-db": "tsx scripts/update-font-metrics-db.ts",
+    "update-font-metrics-db": "tsx scripts/update-font-metrics-db.ts",
     "postinstall": "tsx scripts/postinstall.ts"
   },
   "keywords": [
@@ -55,8 +58,6 @@
   "devDependencies": {
     "@playwright/test": "^1.57.0",
     "@types/node": "^20.10.0",
-    "@types/pixelmatch": "^5.2.6",
-    "@types/pngjs": "^6.0.5",
     "@types/react": "^19.2.7",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
@@ -65,8 +66,8 @@
     "@vitest/ui": "^1.0.4",
     "dotenv": "^16.3.1",
     "eslint": "^8.54.0",
-    "pixelmatch": "^5.3.0",
-    "pngjs": "^7.0.0",
+    "fontkit": "^2.0.4",
+    "@types/fontkit": "^2.0.8",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "tsx": "^4.7.0",

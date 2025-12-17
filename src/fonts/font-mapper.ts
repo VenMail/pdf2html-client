@@ -20,13 +20,12 @@ export class FontMapper {
       strategy: 'similar',
       similarityThreshold: 0.7,
       cacheEnabled: true
-    },
-    apiKey?: string
+    }
   ) {
     this.options = options;
     this.detector = new FontDetector();
     this.metricsComparator = new FontMetricsComparator();
-    this.googleFontsAPI = new GoogleFontsAPI(apiKey);
+    this.googleFontsAPI = new GoogleFontsAPI();
   }
 
   async mapFont(detectedFont: DetectedFont): Promise<FontMapping> {

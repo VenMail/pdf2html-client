@@ -111,6 +111,10 @@ export class TextProcessor {
   private detectTextDecoration(
     item: PDFTextContent
   ): 'none' | 'underline' | 'line-through' | 'overline' {
+    if (item.textDecoration && item.textDecoration !== 'none') {
+      return item.textDecoration;
+    }
+
     const fontName = (item.fontInfo?.name || item.fontFamily).toLowerCase();
 
     if (fontName.includes('underline')) return 'underline';

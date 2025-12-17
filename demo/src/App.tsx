@@ -61,16 +61,9 @@ function App() {
       (window as unknown as { __PDF2HTML_DEBUG_DECODE__?: boolean }).__PDF2HTML_DEBUG_DECODE__ = true;
       (window as unknown as { __PDF2HTML_DECODE_ARTIFACT__?: unknown }).__PDF2HTML_DECODE_ARTIFACT__ = undefined;
 
-      // Get API key from environment
-      const apiKey = import.meta.env.GOOGLE_API_KEY;
-      if (apiKey) {
-        // Make API key available globally for font mapper
-        window.__GOOGLE_API_KEY__ = apiKey;
-      }
-
       const converter = new PDF2HTML({
-        enableOCR: true,
-        enableFontMapping: true,
+        enableOCR: false,
+        enableFontMapping: false,
         parserStrategy,
         htmlOptions: {
           format: 'html+inline-css',

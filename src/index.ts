@@ -51,17 +51,7 @@ export class PDF2HTML {
     this.fontDetector = new FontDetector();
 
     if (this.config.enableFontMapping) {
-      // Get API key from environment or config
-      const apiKey =
-        typeof process !== 'undefined' &&
-        typeof (process as unknown as { env?: { GOOGLE_API_KEY?: string } }).env?.GOOGLE_API_KEY === 'string'
-          ? (process as unknown as { env: { GOOGLE_API_KEY: string } }).env.GOOGLE_API_KEY
-          : typeof window !== 'undefined' &&
-              typeof (window as unknown as { __GOOGLE_API_KEY__?: string }).__GOOGLE_API_KEY__ === 'string'
-            ? (window as unknown as { __GOOGLE_API_KEY__: string }).__GOOGLE_API_KEY__
-            : undefined;
-      
-      this.fontMapper = new FontMapper(this.config.fontMappingOptions, apiKey);
+      this.fontMapper = new FontMapper(this.config.fontMappingOptions);
     }
 
     this.htmlGenerator = new HTMLGenerator(
