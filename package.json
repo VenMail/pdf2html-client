@@ -29,7 +29,7 @@
     "lint": "eslint src --ext ts,tsx",
     "type-check": "tsc --noEmit",
     "demo": "vite --config vite.demo.config.ts",
-    "publish:npm": "pnpm run build && tsx scripts/publish-npm.mjs",
+    "publish:npm": "pnpm run test:pdfs && pnpm run build && tsx scripts/publish-npm.mjs",
     "download-models": "tsx scripts/download-models.ts",
     "update-font-db": "tsx scripts/update-font-metrics-db.ts",
     "update-font-metrics-db": "tsx scripts/update-font-metrics-db.ts",
