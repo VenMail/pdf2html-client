@@ -1,6 +1,6 @@
 {
   "name": "pdf2html-client",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Advanced client-side PDF to HTML converter with WASM parsing, OCR support, and intelligent text layout reconstruction. Perfect for document management systems and web applications.",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,17 +23,18 @@
     "test:source-agreement": "playwright test tests/browser/source-agreement.spec.ts --workers=1",
     "test:pdfs:headed": "playwright test tests/browser/pdf-conversion.spec.ts --headed",
     "test:pdfs:debug": "playwright test tests/browser/pdf-conversion.spec.ts --debug",
-    "analyze-pdf": "playwright test tests/browser/pdf-analysis.spec.ts",
+    "analyze-pdf": "node scripts/analyze-pdf.js",
     "test:browser": "playwright test",
     "test:browser:ui": "playwright test --ui",
     "lint": "eslint src --ext ts,tsx",
     "type-check": "tsc --noEmit",
     "demo": "vite --config vite.demo.config.ts",
-    "publish:npm": "pnpm run test:pdfs && pnpm run build && tsx scripts/publish-npm.mjs",
-    "download-models": "tsx scripts/download-models.ts",
-    "update-font-db": "tsx scripts/update-font-metrics-db.ts",
-    "update-font-metrics-db": "tsx scripts/update-font-metrics-db.ts",
-    "postinstall": "tsx scripts/postinstall.ts"
+    "publish:npm": "node scripts/publish-npm.mjs",
+    "download-models": "node scripts/download-models.cjs",
+    "update-font-db": "node scripts/update-font-metrics-db.cjs",
+    "update-font-metrics-db": "node scripts/update-font-metrics-db.cjs",
+    "postinstall": "node scripts/postinstall.cjs",
+    "pdf2html:setup-models": "node scripts/postinstall.cjs"
   },
   "keywords": [
     "pdf",

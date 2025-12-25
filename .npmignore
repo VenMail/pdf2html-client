@@ -50,9 +50,12 @@ node_modules/
 .DS_Store
 Thumbs.db
 
-# Documentation and scripts (exclude from package)
+# Documentation (exclude from package)
 docs/
+
+# Include postinstall script but exclude other scripts
 scripts/
+!scripts/postinstall.ts
 
 # Package manager files
 pnpm-lock.yaml
