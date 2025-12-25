@@ -59,7 +59,7 @@ export default defineConfig(() => {
       }
     },
     optimizeDeps: {
-      exclude: ['@embedpdf/pdfium'],
+      exclude: ['onnxruntime-web', '@techstark/opencv-js'],
       include: ['unpdf'],
       force: true
     },

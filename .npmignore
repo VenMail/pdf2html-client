@@ -1,0 +1,64 @@
+# Demo and development files
+demo/
+dist-demo/
+
+# Tests and coverage
+tests/
+coverage/
+*.lcov
+
+# Source files (only include compiled dist/)
+src/
+*.ts
+*.tsx
+!*.d.ts
+
+# Development configuration
+.vscode/
+.eslintrc*
+playwright.config.*
+vite.config.*
+vitest.config.*
+tsconfig.json
+tsconfig.*.json
+
+# Source maps (exclude from package)
+*.map
+**/*.map
+
+# Models and large binary files (should be downloaded separately)
+models/
+dist/models/
+*.onnx
+*.wasm
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Build artifacts and cache
+node_modules/
+.cache/
+.vite/
+*.tsbuildinfo
+*.log
+
+# Environment and secrets
+.env*
+*.token
+.DS_Store
+Thumbs.db
+
+# Documentation and scripts (exclude from package)
+docs/
+scripts/
+
+# Package manager files
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# Temporary files
+*.tmp
+*.temp

@@ -1,6 +1,6 @@
 {
   "name": "pdf2html-client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Advanced client-side PDF to HTML converter with WASM parsing, OCR support, and intelligent text layout reconstruction. Perfect for document management systems and web applications.",
   "type": "module",
   "main": "./dist/index.js",
@@ -70,13 +70,13 @@
   ],
   "author": "PDF2HTML Contributors",
   "license": "MIT",
-  "homepage": "https://github.com/your-org/pdf2html-client#readme",
+  "homepage": "https://github.com/VenMail/pdf2html-client#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-org/pdf2html-client.git"
+    "url": "git+https://github.com/VenMail/pdf2html-client.git"
   },
   "bugs": {
-    "url": "https://github.com/your-org/pdf2html-client/issues"
+    "url": "https://github.com/VenMail/pdf2html-client/issues"
   },
   "dependencies": {
     "@embedpdf/pdfium": "^1.5.0",

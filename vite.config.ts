@@ -13,7 +13,13 @@ export default defineConfig({
       formats: ['es', 'umd']
     },
     rollupOptions: {
-      external: ['react', 'react-dom', '@embedpdf/pdfium', 'pdfjs-dist'],
+      external: [
+        'react',
+        'react-dom',
+        'pdfjs-dist',
+        'onnxruntime-web',
+        '@techstark/opencv-js'
+      ],
       output: {
         globals: {
           react: 'React',
@@ -21,11 +27,11 @@ export default defineConfig({
         }
       }
     },
-    sourcemap: true,
+    sourcemap: false,
     target: 'es2022'
   },
   optimizeDeps: {
-    exclude: ['@embedpdf/pdfium']
+    exclude: ['onnxruntime-web', '@techstark/opencv-js']
   },
   worker: {
     format: 'es'

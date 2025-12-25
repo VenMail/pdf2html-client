@@ -1642,8 +1642,10 @@ export class HTMLGenerator {
 
   private generateSvgTextLayer(page: PDFPage, fontMappings: FontMapping[]): string {
     const analysis = this.regionLayoutAnalyzer.analyze(page);
-    const out: string[] = [];
-    out.push(
+    const svgOut: string[] = [];
+    const htmlOut: string[] = [];
+    
+    svgOut.push(
       `<svg class="pdf-text-layer" width="${page.width}" height="${page.height}" viewBox="0 0 ${page.width} ${page.height}" style="position: absolute; left: 0; top: 0; width: ${page.width}px; height: ${page.height}px; overflow: visible; pointer-events: none;">`
     );
 
@@ -1656,14 +1658,28 @@ export class HTMLGenerator {
             ...run,
             text: this.wordValidator.fixMergedText(run.text || '')
           };
-          const fontClass = this.getFontClass(fixedRun, fontMappings);
-          out.push(this.layoutEngine.generateSvgTextElement(fixedRun, page.height, fontClass));
+          
+          // Check if this run should use SVG text
+          const textContent = this.layoutEngine.getProcessedTextContent(fixedRun);
+          if (this.layoutEngine.shouldUseSvgText(textContent)) {
+            const fontClass = this.getFontClass(fixedRun, fontMappings);
+            svgOut.push(this.layoutEngine.generateSvgTextElement(fixedRun, page.height, fontClass));
+          } else {
+            // Fall back to HTML text for problematic runs
+            htmlOut.push(this.layoutEngine.generateTextElement(fixedRun, page.height, this.getFontClass(fixedRun, fontMappings)));
+          }
         }
       }
     }
 
-    out.push('</svg>');
-    return out.join('\n');
+    svgOut.push('</svg>');
+    
+    // Return SVG with HTML fallbacks if needed
+    if (htmlOut.length > 0) {
+      return svgOut.join('\n') + '\n<div class="pdf-text-fallback" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none;">\n' + htmlOut.join('\n') + '\n</div>';
+    }
+    
+    return svgOut.join('\n');
   }
 
   private generatePageHTML(
@@ -1696,11 +1712,8 @@ export class HTMLGenerator {
       parts.push(this.layoutEngine.generateImageElement(image, page.height, this.options.baseUrl));
     }
 
-    const useSvgText = this.options.preserveLayout && this.options.textRenderMode === 'svg';
-
-    if (useSvgText) {
-      parts.push(this.generateSvgTextLayer(page, fontMappings));
-    } else if (this.options.textLayout === 'semantic' && this.options.preserveLayout) {
+    // Try other text rendering methods first, SVG is now a last resort
+    if (this.options.textLayout === 'semantic' && this.options.preserveLayout) {
       parts.push(this.generatePositionedSemanticText(page, fontMappings));
     } else if (this.options.textLayout === 'flow' && this.options.preserveLayout) {
       parts.push(this.generateOutlineFlowText(page, fontMappings));
@@ -1712,6 +1725,9 @@ export class HTMLGenerator {
       parts.push(semantic);
     } else if (this.options.preserveLayout && this.options.textLayout === 'smart') {
       parts.push(this.generateSmartText(page, fontMappings));
+    } else if (this.options.preserveLayout && this.options.textRenderMode === 'svg') {
+      // Only use SVG text if explicitly requested and all other methods are not available
+      parts.push(this.generateSvgTextLayer(page, fontMappings));
     } else {
       if (this.options.preserveLayout) {
         const analysis = this.regionLayoutAnalyzer.analyze(page);

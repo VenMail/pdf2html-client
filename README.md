@@ -41,6 +41,15 @@ All of this runs in the browser (via pdfium or unpdf).
 pnpm add pdf2html-client
 ```
 
+### Bundling & externals
+
+- **Bundled by default:** PDFium (primary) and `unpdf` (fallback) so core parsing works out-of-the-box.
+- **External (you must provide):**
+  - `pdfjs-dist` (used as an additional parser path)
+  - `onnxruntime-web` and `@techstark/opencv-js` (used only when OCR is enabled)
+
+For bundlers, mark these as externals/peer-like. For UMD/CDN usage, ensure these scripts are available globally before loading the library.
+
 ### OCR models (optional)
 
 If you enable OCR, you should download the lightweight OCR models ahead of time:
@@ -50,6 +59,60 @@ pnpm run download-models
 ```
 
 This downloads models into `models/`.
+
+## Usage with externals
+
+### ESM / bundlers
+
+Install peer dependencies and mark them as externals in your bundler config:
+
+```bash
+pnpm add pdfjs-dist onnxruntime-web @techstark/opencv-js
+```
+
+```ts
+// Vite example
+export default {
+  build: {
+    rollupOptions: {
+      external: ['pdfjs-dist', 'onnxruntime-web', '@techstark/opencv-js']
+    }
+  }
+}
+```
+
+```ts
+import { PDF2HTML } from 'pdf2html-client';
+
+const converter = new PDF2HTML({
+  parserStrategy: 'auto', // or 'pdfjs' to explicitly use pdfjs-dist
+  enableOCR: true // requires onnxruntime-web and @techstark/opencv-js
+});
+```
+
+### UMD / CDN
+
+Load the external scripts before the library:
+
+```html
+<!-- PDF.js -->
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.296/build/pdf.min.js"></script>
+<script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.296/build/pdf.worker.min.js';</script>
+<!-- OCR deps (only needed if enableOCR=true) -->
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.11.0-release.1/opencv.js"></script>
+<!-- Then load pdf2html-client -->
+<script src="./pdf2html-client.umd.js"></script>
+<script>
+  const { PDF2HTML } = window.PDF2HTML;
+  const converter = new PDF2HTML({ enableOCR: true });
+</script>
+```
+
+Notes:
+- PDF.js is only required when using `parserStrategy: 'pdfjs'` or when `auto` chooses it. If missing, the library falls back to bundled PDFium/unpdf.
+- OCR dependencies are only required when `enableOCR: true`. They are lazy-loaded on first OCR use.
+- Ensure OCR models are available at `models/` or provide custom URLs via `ocrConfig`.
 
 ## Quick start
 

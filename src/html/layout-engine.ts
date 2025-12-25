@@ -249,6 +249,34 @@ export class LayoutEngine {
     return className;
   }
 
+  getProcessedTextContent(text: PDFTextContent): ProcessedTextContent {
+    return this.textProcessor.processTextContent([text])[0];
+  }
+
+  shouldUseSvgText(text: ProcessedTextContent): boolean {
+    // Don't use SVG text for very short text (can cause stretching issues)
+    if (!text.text || text.text.trim().length < 2) {
+      return false;
+    }
+    
+    // Don't use SVG text if width seems unreasonable compared to text content
+    if (text.width && text.width > 0) {
+      const estimatedWidth = text.text.length * text.fontSize * 0.6; // Rough estimate
+      const ratio = text.width / estimatedWidth;
+      // If width is more than 3x the estimated width, SVG text will stretch badly
+      if (ratio > 3 || ratio < 0.3) {
+        return false;
+      }
+    }
+    
+    // Don't use SVG text for very large font sizes (stretching becomes more noticeable)
+    if (text.fontSize && text.fontSize > 72) {
+      return false;
+    }
+    
+    return true;
+  }
+
   private generateProcessedSvgTextElement(
     text: ProcessedTextContent,
     pageHeight: number,
@@ -267,7 +295,7 @@ export class LayoutEngine {
     attrs.push('text-anchor="start"');
     attrs.push('xml:space="preserve"');
     attrs.push(`textLength="${Math.max(0, text.width)}"`);
-    attrs.push('lengthAdjust="spacingAndGlyphs"');
+    attrs.push('lengthAdjust="spacing"');
 
     if (typeof text.rotation === 'number' && Math.abs(text.rotation) > 0.01) {
       attrs.push(`transform="rotate(${text.rotation} ${x} ${y})"`);
