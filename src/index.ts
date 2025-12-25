@@ -15,6 +15,68 @@ import { HTMLGenerator } from './html/html-generator.js';
 import type { OCREngine } from './ocr/ocr-engine.js';
 import type { OCRProcessor } from './ocr/ocr-processor.js';
 
+// Convenience configuration presets
+export const ConfigPresets = {
+  /**
+   * Document editing and content extraction
+   * Maximum editability with semantic structure
+   */
+  editing: {
+    enableOCR: true,
+    enableFontMapping: true,
+    htmlOptions: {
+      format: 'html+inline-css' as const,
+      preserveLayout: false,
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64' as const,
+      textLayout: 'flow' as const,
+      includeExtractedText: true
+    }
+  } as PDF2HTMLConfig,
+
+  /**
+   * High-fidelity document display
+   * Pixel-perfect positioning for archival and viewing
+   */
+  fidelity: {
+    enableOCR: false,
+    enableFontMapping: true,
+    htmlOptions: {
+      format: 'html+inline-css' as const,
+      preserveLayout: true,
+      responsive: false,
+      darkMode: false,
+      imageFormat: 'base64' as const,
+      textLayout: 'absolute' as const,
+      textLayoutPasses: 1,
+      textPipeline: 'legacy' as const
+    }
+  } as PDF2HTMLConfig,
+
+  /**
+   * Web-optimized responsive documents
+   * Modern, accessible, and performance-optimized
+   */
+  web: {
+    enableOCR: true,
+    enableFontMapping: false,
+    htmlOptions: {
+      format: 'html+css' as const,
+      preserveLayout: true,
+      responsive: true,
+      darkMode: true,
+      imageFormat: 'url' as const,
+      textLayout: 'semantic' as const,
+      useFlexboxLayout: true,
+      semanticLayout: {
+        blockGapFactor: 1.2,
+        headingThreshold: 0.8
+      }
+    }
+  } as PDF2HTMLConfig
+};
+
 export class PDF2HTML {
   private config: PDF2HTMLConfig;
   private parser: PDFParser;
@@ -42,7 +104,7 @@ export class PDF2HTML {
         responsive: true,
         darkMode: false,
         imageFormat: 'base64',
-        textLayout: 'absolute',
+        textLayout: 'semantic',
         textLayoutPasses: 1
       };
     }
@@ -58,6 +120,165 @@ export class PDF2HTML {
       this.config.htmlOptions || {},
       this.config.cssOptions
     );
+  }
+
+  // Chainable configuration methods
+  enableOCR(enabled: boolean = true): this {
+    this.config.enableOCR = enabled;
+    return this;
+  }
+
+  enableFontMapping(enabled: boolean = true): this {
+    this.config.enableFontMapping = enabled;
+    if (enabled) {
+      if (!this.fontMapper) {
+        this.fontMapper = new FontMapper(this.config.fontMappingOptions);
+      }
+    } else {
+      // Clean up font mapper when disabled
+      if (this.fontMapper) {
+        this.fontMapper = null;
+      }
+    }
+    return this;
+  }
+
+  setParserStrategy(strategy: 'auto' | 'pdfium' | 'unpdf'): this {
+    // Dispose old parser before creating new one
+    if (this.parser) {
+      this.parser.dispose();
+    }
+    this.config.parserStrategy = strategy;
+    this.parser = new PDFParser(strategy);
+    return this;
+  }
+
+  setTextLayout(layout: 'absolute' | 'smart' | 'flow' | 'semantic'): this {
+    const defaults = {
+      format: 'html+inline-css' as const,
+      preserveLayout: true,
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64' as const
+    };
+    this.config.htmlOptions = { ...defaults, ...this.config.htmlOptions, textLayout: layout };
+    return this;
+  }
+
+  setPreserveLayout(preserve: boolean): this {
+    const defaults = {
+      format: 'html+inline-css' as const,
+      preserveLayout: true,
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64' as const
+    };
+    this.config.htmlOptions = { ...defaults, ...this.config.htmlOptions, preserveLayout: preserve };
+    return this;
+  }
+
+  setResponsive(responsive: boolean): this {
+    const defaults = {
+      format: 'html+inline-css' as const,
+      preserveLayout: true,
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64' as const
+    };
+    this.config.htmlOptions = { ...defaults, ...this.config.htmlOptions, responsive: responsive };
+    return this;
+  }
+
+  setDarkMode(dark: boolean): this {
+    const defaults = {
+      format: 'html+inline-css' as const,
+      preserveLayout: true,
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64' as const
+    };
+    this.config.htmlOptions = { ...defaults, ...this.config.htmlOptions, darkMode: dark };
+    return this;
+  }
+
+  setImageFormat(format: 'base64' | 'url'): this {
+    const defaults = {
+      format: 'html+inline-css' as const,
+      preserveLayout: true,
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64' as const
+    };
+    this.config.htmlOptions = { ...defaults, ...this.config.htmlOptions, imageFormat: format };
+    return this;
+  }
+
+  setOutputFormat(format: 'html' | 'html+css' | 'html+inline-css'): this {
+    const defaults = {
+      format: 'html+inline-css' as const,
+      preserveLayout: true,
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64' as const
+    };
+    this.config.htmlOptions = { ...defaults, ...this.config.htmlOptions, format: format };
+    return this;
+  }
+
+  includeExtractedText(include: boolean = true): this {
+    const defaults = {
+      format: 'html+inline-css' as const,
+      preserveLayout: true,
+      responsive: true,
+      darkMode: false,
+      imageFormat: 'base64' as const
+    };
+    this.config.htmlOptions = { ...defaults, ...this.config.htmlOptions, includeExtractedText: include };
+    return this;
+  }
+
+  setOCRConfig(config: NonNullable<PDF2HTMLConfig['ocrConfig']>): this {
+    this.config.ocrConfig = config;
+    return this;
+  }
+
+  setMaxConcurrentPages(max: number): this {
+    this.config.maxConcurrentPages = max;
+    return this;
+  }
+
+  // Apply a preset configuration
+  applyPreset(preset: keyof typeof ConfigPresets): this {
+    if (!ConfigPresets[preset]) {
+      throw new Error(`Unknown preset: ${preset}. Available presets: ${Object.keys(ConfigPresets).join(', ')}`);
+    }
+    
+    // Validate preset structure before applying
+    const presetConfig = ConfigPresets[preset];
+    if (!presetConfig || typeof presetConfig !== 'object') {
+      throw new Error(`Invalid preset configuration for: ${preset}`);
+    }
+    
+    // Apply preset with proper merging to preserve critical config properties
+    const originalParserStrategy = this.config.parserStrategy;
+    const originalMaxConcurrentPages = this.config.maxConcurrentPages;
+    const originalCacheEnabled = this.config.cacheEnabled;
+    
+    Object.assign(this.config, presetConfig);
+    
+    // Restore critical properties that shouldn't be overridden by presets
+    this.config.parserStrategy = originalParserStrategy || this.config.parserStrategy;
+    this.config.maxConcurrentPages = originalMaxConcurrentPages || this.config.maxConcurrentPages;
+    this.config.cacheEnabled = originalCacheEnabled !== undefined ? originalCacheEnabled : this.config.cacheEnabled;
+    
+    // Reinitialize components if needed
+    if (presetConfig.enableFontMapping && !this.fontMapper) {
+      this.fontMapper = new FontMapper(this.config.fontMappingOptions);
+    } else if (!presetConfig.enableFontMapping && this.fontMapper) {
+      this.fontMapper = null;
+    }
+    
+    return this;
   }
 
   async convert(
@@ -346,6 +567,159 @@ export class PDF2HTML {
     if (this.ocrEngine && this.ocrEngine.dispose) {
       this.ocrEngine.dispose();
     }
+  }
+
+  // Static factory methods for common use cases
+  static forEditing(): PDF2HTML {
+    return new PDF2HTML(ConfigPresets.editing);
+  }
+
+  static forFidelity(): PDF2HTML {
+    return new PDF2HTML(ConfigPresets.fidelity);
+  }
+
+  static forWeb(): PDF2HTML {
+    return new PDF2HTML(ConfigPresets.web);
+  }
+
+  // Static convenience methods for one-liner conversion
+  static async convertForEditing(
+    pdfData: ArrayBuffer | File,
+    progressCallback?: ProgressCallback
+  ): Promise<HTMLOutput> {
+    const converter = PDF2HTML.forEditing();
+    try {
+      return await converter.convert(pdfData, progressCallback);
+    } finally {
+      converter.dispose();
+    }
+  }
+
+  static async convertForFidelity(
+    pdfData: ArrayBuffer | File,
+    progressCallback?: ProgressCallback
+  ): Promise<HTMLOutput> {
+    const converter = PDF2HTML.forFidelity();
+    try {
+      return await converter.convert(pdfData, progressCallback);
+    } finally {
+      converter.dispose();
+    }
+  }
+
+  static async convertForWeb(
+    pdfData: ArrayBuffer | File,
+    progressCallback?: ProgressCallback
+  ): Promise<HTMLOutput> {
+    const converter = PDF2HTML.forWeb();
+    try {
+      return await converter.convert(pdfData, progressCallback);
+    } finally {
+      converter.dispose();
+    }
+  }
+
+  // Auto-detection method for optimal configuration
+  static async suggestOptimalConfig(
+    pdfData: ArrayBuffer | File
+  ): Promise<{ preset: keyof typeof ConfigPresets; reason: string }> {
+    // Convert File to ArrayBuffer if needed
+    const arrayBuffer = pdfData instanceof File ? await pdfData.arrayBuffer() : pdfData;
+    
+    // Quick analysis without full conversion
+    const parser = new PDFParser('auto');
+    let document = null;
+    
+    try {
+      document = await parser.parse(arrayBuffer, {
+        extractText: true,
+        extractImages: true,
+        extractGraphics: false,
+        extractForms: false,
+        extractAnnotations: false
+      });
+      
+      // Detect if this is a scanned PDF
+      const { ScannedPDFDetector } = await import('./core/scanned-pdf-detector.js');
+      const detector = new ScannedPDFDetector();
+      const scanAnalysis = detector.analyze(document);
+      
+      // Analyze document characteristics
+      const pageCount = document.pageCount;
+      const totalImages = document.pages.reduce((sum, page) => sum + page.content.images.length, 0);
+      const totalText = document.pages.reduce((sum, page) => sum + page.content.text.length, 0);
+      const hasComplexLayout = document.pages.some(page => 
+        page.content.text.length > 50 && page.content.images.length > 0
+      );
+      
+      // Decision logic
+      if (scanAnalysis.isScanned) {
+        return {
+          preset: 'editing',
+          reason: 'Document appears to be scanned - OCR enabled for text extraction'
+        };
+      }
+      
+      if (pageCount === 1 && totalImages > 5) {
+        return {
+          preset: 'fidelity',
+          reason: 'Single page with many images - high-fidelity mode recommended'
+        };
+      }
+      
+      if (hasComplexLayout || pageCount > 10) {
+        return {
+          preset: 'web',
+          reason: 'Complex layout detected - web-optimized responsive mode recommended'
+        };
+      }
+      
+      if (totalText > 1000) {
+        return {
+          preset: 'editing',
+          reason: 'Text-heavy document - editing mode for better content extraction'
+        };
+      }
+      
+      // Default to web for general use
+      return {
+        preset: 'web',
+        reason: 'General document - web-optimized mode provides best balance'
+      };
+    } finally {
+      // Always dispose parser, even if an error occurs
+      parser.dispose();
+    }
+  }
+
+  // Auto-convert with optimal configuration
+  static async convertAuto(
+    pdfData: ArrayBuffer | File,
+    progressCallback?: ProgressCallback
+  ): Promise<{ result: HTMLOutput; presetUsed: keyof typeof ConfigPresets; reason: string }> {
+    const suggestion = await PDF2HTML.suggestOptimalConfig(pdfData);
+    
+    let result: HTMLOutput;
+    switch (suggestion.preset) {
+      case 'editing':
+        result = await PDF2HTML.convertForEditing(pdfData, progressCallback);
+        break;
+      case 'fidelity':
+        result = await PDF2HTML.convertForFidelity(pdfData, progressCallback);
+        break;
+      case 'web':
+        result = await PDF2HTML.convertForWeb(pdfData, progressCallback);
+        break;
+
+      default:
+        throw new Error(`Unknown preset: ${suggestion.preset}`);
+    }
+    
+    return {
+      result,
+      presetUsed: suggestion.preset,
+      reason: suggestion.reason
+    };
   }
 }
 

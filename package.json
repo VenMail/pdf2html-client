@@ -1,6 +1,6 @@
 {
   "name": "pdf2html-client",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Advanced client-side PDF to HTML converter with WASM parsing, OCR support, and intelligent text layout reconstruction. Perfect for document management systems and web applications.",
   "type": "module",
   "main": "./dist/index.umd.js",

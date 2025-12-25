@@ -60,6 +60,46 @@ pnpm run download-models
 
 This downloads models into `models/`.
 
+## Getting Started
+
+### Choose your use case
+
+**I want to edit documents and extract content**
+```ts
+import { PDF2HTML } from 'pdf2html-client';
+const result = await PDF2HTML.convertForEditing(pdfFile);
+```
+
+**I want pixel-perfect document display**
+```ts
+import { PDF2HTML } from 'pdf2html-client';
+const result = await PDF2HTML.convertForFidelity(pdfFile);
+```
+
+**I want responsive web documents**
+```ts
+import { PDF2HTML } from 'pdf2html-client';
+const result = await PDF2HTML.convertForWeb(pdfFile);
+```
+
+**Let the library choose the best option**
+```ts
+import { PDF2HTML } from 'pdf2html-client';
+const { result, presetUsed, reason } = await PDF2HTML.convertAuto(pdfFile);
+console.log(`Used ${presetUsed} preset: ${reason}`);
+```
+
+### What you get
+
+```ts
+console.log(result.html);  // HTML markup
+console.log(result.css);   // CSS styles
+console.log(result.text);  // Extracted text (if enabled)
+console.log(result.metadata); // Processing info
+```
+
+That's it! The library handles everything else automatically.
+
 ## Usage with externals
 
 ### ESM / bundlers
@@ -116,6 +156,70 @@ Notes:
 
 ## Quick start
 
+### Simple one-liner conversion
+
+```ts
+import { PDF2HTML } from 'pdf2html-client';
+
+// For document editing (most common use case)
+const result = await PDF2HTML.convertForEditing(pdfFile);
+
+// For high-fidelity display
+const result = await PDF2HTML.convertForFidelity(pdfFile);
+
+// For web-optimized responsive output
+const result = await PDF2HTML.convertForWeb(pdfFile);
+```
+
+### Using factory methods
+
+```ts
+import { PDF2HTML } from 'pdf2html-client';
+
+// Create converter for specific use case
+const converter = PDF2HTML.forEditing();
+const result = await converter.convert(pdfFile);
+converter.dispose();
+```
+
+### Chainable configuration
+
+```ts
+import { PDF2HTML } from 'pdf2html-client';
+
+// Build configuration step by step
+const converter = new PDF2HTML()
+  .enableOCR(true)
+  .enableFontMapping(true)
+  .setTextLayout('semantic')
+  .setPreserveLayout(true)
+  .setResponsive(true)
+  .setDarkMode(false)
+  .setImageFormat('base64')
+  .includeExtractedText(true)
+  .setMaxConcurrentPages(2);
+
+const result = await converter.convert(pdfFile);
+converter.dispose();
+```
+
+### Apply presets and customize
+
+```ts
+import { PDF2HTML } from 'pdf2html-client';
+
+// Start with a preset and customize
+const converter = new PDF2HTML()
+  .applyPreset('editing')
+  .setDarkMode(true)  // Override preset setting
+  .setImageFormat('url');  // Override preset setting
+
+const result = await converter.convert(pdfFile);
+converter.dispose();
+```
+
+### Advanced configuration
+
 ```ts
 import { PDF2HTML } from 'pdf2html-client';
 
@@ -129,7 +233,7 @@ const converter = new PDF2HTML({
     responsive: false,
     darkMode: false,
     imageFormat: 'base64',
-    textLayout: 'smart',
+    textLayout: 'semantic', // Default mode - flow semantic with layout awareness
     textLayoutPasses: 2,
     textPipeline: 'v2',
     includeExtractedText: true
@@ -147,6 +251,115 @@ console.log(out.metadata);
 converter.dispose();
 ```
 
+## Common use cases
+
+### 1. Document editing and content extraction
+
+Perfect for document management systems where users need to edit and extract content from PDFs:
+
+```ts
+import { PDF2HTML } from 'pdf2html-client';
+
+const converter = new PDF2HTML({
+  enableOCR: true, // Handle scanned documents
+  enableFontMapping: true, // Better font fidelity
+  htmlOptions: {
+    textLayout: 'flow', // Maximum editability
+    preserveLayout: false, // Semantic HTML structure
+    format: 'html+inline-css',
+    responsive: true,
+    includeExtractedText: true, // Easy copy-paste
+    imageFormat: 'base64'
+  }
+});
+
+const result = await converter.convert(pdfFile);
+// result.html contains clean, editable semantic HTML
+// result.text contains extracted text for search/indexing
+```
+
+### 2. High-fidelity document display
+
+Ideal for document viewers and archival systems where visual accuracy is paramount:
+
+```ts
+import { PDF2HTML } from 'pdf2html-client';
+
+const converter = new PDF2HTML({
+  enableOCR: false, // Skip OCR for text PDFs
+  enableFontMapping: true,
+  htmlOptions: {
+    textLayout: 'absolute', // Pixel-perfect positioning
+    preserveLayout: true,
+    format: 'html+inline-css',
+    responsive: false,
+    darkMode: false,
+    imageFormat: 'base64',
+    textLayoutPasses: 1, // Faster processing
+    textPipeline: 'legacy' // Proven stability
+  }
+});
+
+const result = await converter.convert(pdfFile);
+// result.html maintains exact PDF visual layout
+```
+
+### 3. Web-optimized responsive documents
+
+Best for web applications that need responsive, accessible documents:
+
+```ts
+import { PDF2HTML } from 'pdf2html-client';
+
+const converter = new PDF2HTML({
+  enableOCR: true,
+  enableFontMapping: false, // Faster loading
+  htmlOptions: {
+    textLayout: 'semantic', // Best of both worlds
+    preserveLayout: true,
+    format: 'html+css', // Separate CSS for caching
+    responsive: true,
+    darkMode: true, // Support dark theme
+    imageFormat: 'url', // Better performance
+    useFlexboxLayout: true, // Modern layout
+    semanticLayout: {
+      blockGapFactor: 1.2,
+      headingThreshold: 0.8
+    }
+  }
+});
+
+const result = await converter.convert(pdfFile);
+// Responsive HTML that adapts to screen sizes
+// Semantic structure for accessibility
+```
+
+### Using configuration presets
+
+For convenience, you can use pre-configured presets:
+
+```ts
+import { PDF2HTML, ConfigPresets } from 'pdf2html-client';
+
+// Document editing preset
+const editingConverter = new PDF2HTML(ConfigPresets.editing);
+
+// High-fidelity display preset  
+const fidelityConverter = new PDF2HTML(ConfigPresets.fidelity);
+
+// Web-optimized preset
+const webConverter = new PDF2HTML(ConfigPresets.web);
+
+// You can also customize presets
+const customConverter = new PDF2HTML({
+  ...ConfigPresets.editing,
+  htmlOptions: {
+    ...ConfigPresets.editing.htmlOptions,
+    darkMode: true // Override preset setting
+  }
+});
+```
+
 ## Output
 
 `convert()` returns an `HTMLOutput`:
@@ -161,6 +374,8 @@ converter.dispose();
 
 Set `htmlOptions.textLayout`:
 
+**Default: `semantic`** - Flow semantic mode with layout awareness, providing the best balance of editability and visual fidelity.
+
 ### `absolute`
 
 Best for maximum positional fidelity. Produces positioned text elements for precise placement.
@@ -174,11 +389,11 @@ Positioned output with additional grouping/merging heuristics to reduce fragment
 Two behaviors depending on `htmlOptions.preserveLayout`:
 
 - **`preserveLayout: true`**
-  - Produces “outline-flow” HTML that aims to be editable while still matching layout constraints.
+  - Produces "outline-flow" HTML that aims to be editable while still matching layout constraints.
 - **`preserveLayout: false`**
   - Produces semantic HTML (paragraphs/headings/lists) for maximum reflow/editability.
 
-### `semantic`
+### `semantic` **(default)**
 
 Produces semantic regions/lines designed for editing while still anchored to the original PDF layout.
 
@@ -187,7 +402,7 @@ When `preserveLayout: true`, semantic mode renders positioned regions and then u
 - **Flexbox line layout** (when safe)
 - **Automatic fallback to absolute positioning** when overlap risk or sensitive geometry is detected
 
-This is the mode targeted at preventing “vertical overlaps” without losing fidelity.
+This is the mode targeted at preventing "vertical overlaps" without losing fidelity.
 
 ### `textRenderMode: 'svg'`
 
