@@ -15,6 +15,7 @@ import { normalizeGlyphItems } from '../text-pipeline/normalizer.js';
 import { buildLineGeometryModel } from '../text-pipeline/line-model.js';
 import { getClassifierProfile, resolveScriptForGlyphs } from '../text-pipeline/classifier-db.js';
 import { RuleBoundaryClassifier } from '../text-pipeline/rule-classifier.js';
+import { SmartBoundaryClassifier } from '../text-pipeline/smart-boundary-classifier.js';
 
 export class RegionLayoutAnalyzer {
   private statsAnalyzer = new DocumentStatisticsAnalyzer();
@@ -22,7 +23,7 @@ export class RegionLayoutAnalyzer {
   private stats: DocumentStatistics | null = null;
   private spaceDetector: StatisticalSpaceDetector | null = null;
   private textMerger: ImprovedTextMerger | null = null;
-  private textPipeline: 'legacy' | 'v2';
+  private textPipeline: 'legacy' | 'v2' | 'smart';
   private pipelineV2: TextReconstructionPipelineV2 | null = null;
   private textClassifierProfile?: string;
   private lineGroupingFontSizeFactor: number;
@@ -64,13 +65,13 @@ export class RegionLayoutAnalyzer {
     return out;
   }
 
-  constructor(options?: { textPipeline?: 'legacy' | 'v2'; textClassifierProfile?: string; lineGroupingFontSizeFactor?: number }) {
+  constructor(options?: { textPipeline?: 'legacy' | 'v2' | 'smart'; textClassifierProfile?: string; lineGroupingFontSizeFactor?: number }) {
     this.textPipeline = options?.textPipeline ?? 'legacy';
     this.textClassifierProfile = options?.textClassifierProfile;
     this.lineGroupingFontSizeFactor = typeof options?.lineGroupingFontSizeFactor === 'number'
       ? options.lineGroupingFontSizeFactor
       : 0.85;
-    this.pipelineV2 = this.textPipeline === 'v2'
+    this.pipelineV2 = (this.textPipeline === 'v2' || this.textPipeline === 'smart')
       ? new TextReconstructionPipelineV2({ classifierProfile: this.textClassifierProfile })
       : null;
   }
@@ -81,14 +82,16 @@ export class RegionLayoutAnalyzer {
   > {
     if (!items || items.length === 0) return [];
 
-    if (this.textPipeline === 'v2') {
+    if (this.textPipeline === 'v2' || this.textPipeline === 'smart') {
       const glyphs = normalizeGlyphItems(items);
       if (glyphs.length === 0) return [];
       const model = buildLineGeometryModel(glyphs);
 
       const profile = getClassifierProfile(this.textClassifierProfile);
       const resolvedScript = profile.script === 'auto' ? resolveScriptForGlyphs(glyphs) : profile.script;
-      const classifier = new RuleBoundaryClassifier();
+      const classifier = this.textPipeline === 'smart' 
+        ? new SmartBoundaryClassifier()
+        : new RuleBoundaryClassifier();
       const ctx = { profile, resolvedScript };
 
       const styleKey = (t: PDFTextContent): string => [
@@ -299,6 +302,7 @@ export class RegionLayoutAnalyzer {
       fontWeight: run.fontWeight,
       fontStyle: run.fontStyle,
       color: run.color,
+      fontInfo: run.fontInfo,
       textDecoration: run.textDecoration,
       rotation: run.rotation
     }));

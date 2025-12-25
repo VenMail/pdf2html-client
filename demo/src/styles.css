@@ -76,6 +76,15 @@ body {
   margin: 0;
 }
 
+ .config-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+ }
+
 .conversion-tuning {
   margin-top: 16px;
   padding: 12px;

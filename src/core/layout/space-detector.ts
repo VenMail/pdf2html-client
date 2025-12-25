@@ -40,6 +40,21 @@ export class StatisticalSpaceDetector {
     const prevText = (prev.text || '').trim();
     const nextText = (next.text || '').trim();
 
+    const isSingleAlphaNum = (s: string): boolean => /^[A-Za-z0-9]$/.test((s || '').trim());
+    const isShortAlpha = (s: string): boolean => /^[A-Za-z]{1,3}$/.test((s || '').trim());
+    const isEmailish = (a: string, b: string): boolean => {
+      const left = (a || '').trim();
+      const right = (b || '').trim();
+      if (!left || !right) return false;
+      if (left.includes('@') || right.includes('@')) return true;
+      if (left.endsWith('@') || right.startsWith('@')) return true;
+      if (left.endsWith('.') && /^[A-Za-z]{2,6}$/.test(right)) return true;
+      if (/^[A-Za-z0-9._%+-]+$/.test(left) && /^[A-Za-z0-9._%+-]+$/.test(right) && (left.includes('.') || right.includes('.'))) {
+        return true;
+      }
+      return false;
+    };
+
     const rawGap = next.x - (prev.x + prev.width);
     const avgFontSize = Math.max(1, (prev.fontSize + next.fontSize) / 2);
     const tolerance = avgFontSize * 0.25;
@@ -74,24 +89,43 @@ export class StatisticalSpaceDetector {
     const digitToDigit = /[0-9]$/.test(prevText) && /^[0-9]/.test(nextText);
     let effectiveThreshold = digitToDigit ? Math.max(baseThreshold, 1.35) : baseThreshold;
 
+    if (isEmailish(prevText, nextText)) {
+      effectiveThreshold = Math.max(effectiveThreshold, 2.2);
+    }
+
+    const singleToSingle = isSingleAlphaNum(prevText) && isSingleAlphaNum(nextText);
+    if (singleToSingle) {
+      effectiveThreshold = Math.max(effectiveThreshold, 2.2);
+    }
+
+    // If both sides are multi-character tokens (3+ chars), treat even small gaps as likely word breaks.
+    // This is language-agnostic and prevents regressions like AGENTCOPY / RecordLocator.
+    // Lowered threshold to 0.15 to catch cases like "connectingfinance" -> "connecting finance"
+    // This check must come BEFORE the shortAlphaPair check to take precedence.
+    const multiToken = prevText.length >= 3 && nextText.length >= 3;
+    const alphaLike = /[A-Za-z]$/.test(prevText) && /^[A-Za-z]/.test(nextText);
+    if (multiToken && alphaLike) {
+      effectiveThreshold = Math.min(effectiveThreshold, 0.15);
+    }
+
+    // For very short alpha fragments (1-3 chars), be more conservative to avoid splitting abbreviations
+    // Only apply this if NOT already handled by multiToken check above
+    const shortAlphaPair = isShortAlpha(prevText) && isShortAlpha(nextText);
+    const alphaLikeShort = /[A-Za-z]$/.test(prevText) && /^[A-Za-z]/.test(nextText);
+    if (shortAlphaPair && alphaLikeShort && !multiToken) {
+      effectiveThreshold = Math.max(effectiveThreshold, 1.85);
+    }
+
     // Insert after common separators even if the numeric spacing is tight.
     if (/[:;,]$/.test(prevText) && /^[A-Za-z0-9]/.test(nextText)) {
       effectiveThreshold = Math.min(effectiveThreshold, 0.28);
     }
 
-    // If both sides are multi-character tokens, treat even small gaps as likely word breaks.
-    // This is language-agnostic and prevents regressions like AGENTCOPY / RecordLocator.
-    const multiToken = prevText.length >= 3 && nextText.length >= 3;
-    const alphaLike = /[A-Za-z]$/.test(prevText) && /^[A-Za-z]/.test(nextText);
-    if (multiToken && alphaLike) {
-      effectiveThreshold = Math.min(effectiveThreshold, 0.26);
-    }
-
     // Case boundary: lower-case followed by Upper-case often indicates a missing space between words
-    // (e.g. "GateBoarding", "MuhammedInternational"). Keep this conservative.
+    // (e.g. "GateBoarding", "MuhammedInternational"). Be aggressive here.
     const caseBoundary = /[a-z]$/.test(prevText) && /^[A-Z]/.test(nextText);
-    if (caseBoundary && prevText.length >= 3 && nextText.length >= 3) {
-      effectiveThreshold = Math.min(effectiveThreshold, 0.14);
+    if (caseBoundary && prevText.length >= 2 && nextText.length >= 2) {
+      effectiveThreshold = Math.min(effectiveThreshold, 0.08);
     }
 
     // Common short connector words often render with very tight glyph gaps in PDFs.

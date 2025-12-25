@@ -33,7 +33,7 @@ export interface HTMLGenerationOptions {
   textLayout?: 'absolute' | 'smart' | 'flow' | 'semantic';
   textLayoutPasses?: 1 | 2;
   textRenderMode?: 'html' | 'svg';
-  textPipeline?: 'legacy' | 'v2';
+  textPipeline?: 'legacy' | 'v2' | 'smart';
   includeExtractedText?: boolean;
   textClassifier?: 'rule';
   textClassifierProfile?: string;

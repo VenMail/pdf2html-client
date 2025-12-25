@@ -13,6 +13,8 @@ import { SemanticHTMLGenerator } from './semantic-html-generator.js';
 import { normalizeFontName } from '../fonts/font-name-normalizer.js';
 import { adaptAbsoluteToFlex } from './layout-adapter.js';
 import { getDefaultFontMetricsResolver } from '../fonts/font-metrics-resolver.js';
+import { getDefaultWordValidator } from '../core/text-pipeline/word-validator.js';
+import { getDefaultPredictiveModel } from '../core/text-pipeline/predictive-model.js';
 
 type LineToken =
   | { type: 'text'; text: string; sample: PDFTextContent }
@@ -27,6 +29,8 @@ export class HTMLGenerator {
   private extraCssRules: string[] = [];
   private flowStyleClassByKey: Map<string, string> = new Map();
   private absGapCssInjected: boolean = false;
+  private wordValidator = getDefaultWordValidator();
+  private predictiveModel = getDefaultPredictiveModel();
 
   private static OUTLINE_LIST_MARKERS: Array<{ pattern: RegExp; listType: 'ul' | 'ol' }> = [
     { pattern: /^[•●○■□◆◇▪▫]\s+/, listType: 'ul' },
@@ -630,14 +634,211 @@ export class HTMLGenerator {
     return { paddingLeft, paddingRight, widthAdjustment };
   }
 
+  /**
+   * Use lexical models (dictionary + n-grams) to improve word boundaries
+   * in already-merged text runs.
+   *
+   * This is deliberately conservative and only inserts spaces *inside*
+   * long alphabetic sequences when the dictionary suggests strong
+   * boundaries and the n-gram model prefers the split.
+   */
+  private enhanceRunsWithLexicalModel(runs: PDFTextContent[]): PDFTextContent[] {
+    if (!runs || runs.length === 0) return runs;
+
+    const validator = this.wordValidator;
+    const model = this.predictiveModel;
+
+    const enhanceText = (text: string): string => {
+      const raw = text || '';
+      const trimmed = raw.trim();
+      if (trimmed.length < 8) return raw;
+
+      // Only operate on mostly alphabetic sequences without many spaces
+      const letters = trimmed.replace(/[^A-Za-z]/g, '').length;
+      const spaceCount = (trimmed.match(/\s+/g) || []).length;
+      const alphaRatio = letters / Math.max(1, trimmed.length);
+      if (alphaRatio < 0.65 || spaceCount >= Math.max(1, trimmed.length / 12)) return raw;
+
+      // Work on a pure A-Z string (strip punctuation/digits) for boundary suggestions
+      const compact = trimmed.replace(/[^A-Za-z]+/g, '');
+      if (compact.length < 8) return raw;
+
+      const suggestions = validator.suggestBoundaries(compact);
+      if (!suggestions || suggestions.length === 0) return raw;
+
+      const boundaryPositions = Array.from(
+        new Set(
+          suggestions
+            .filter((s) => s.position > 1 && s.position < compact.length - 1 && s.confidence >= 0.7)
+            .map((s) => s.position)
+        )
+      ).sort((a, b) => a - b);
+
+      if (boundaryPositions.length === 0) return raw;
+
+      const parts: string[] = [];
+      let start = 0;
+      for (const pos of boundaryPositions) {
+        parts.push(compact.slice(start, pos));
+        start = pos;
+      }
+      parts.push(compact.slice(start));
+
+      // Validate parts: avoid creating obvious gibberish
+      const validParts = parts.filter((p) => p.length > 0);
+      if (validParts.length <= 1) return raw;
+
+      let completeOrPrefix = 0;
+      for (const p of validParts) {
+        const res = validator.validate(p);
+        if (res === 'complete' || res === 'prefix') completeOrPrefix += 1;
+      }
+
+      const lexicalCoverage = completeOrPrefix / validParts.length;
+      if (lexicalCoverage < 0.4) return raw;
+
+      // Compare n-gram likelihood: prefer split only if tokens look better
+      const joinedScore = model.scoreWordLikelihood(compact);
+      const splitScore = validParts.reduce((acc, p) => acc + model.scoreWordLikelihood(p), 0) / validParts.length;
+      if (splitScore <= joinedScore + 0.02) return raw;
+
+      // Reconstruct with spaces; preserve original leading/trailing whitespace
+      const rebuiltCore = validParts.join(' ');
+      const leadingWs = raw.match(/^\s+/)?.[0] ?? '';
+      const trailingWs = raw.match(/\s+$/)?.[0] ?? '';
+      return leadingWs + rebuiltCore + trailingWs;
+    };
+
+    return runs.map((run) => {
+      const text = run.text || '';
+      const enhanced = enhanceText(text);
+      if (enhanced === text) return run;
+      return { ...run, text: enhanced };
+    });
+  }
+
   private generateFlexboxSemanticText(page: PDFPage, fontMappings: FontMapping[]): string {
     const analysis = this.regionLayoutAnalyzer.analyze(page);
     const absLineHeightFactor = this.options.layoutTuning?.absLineHeightFactor ?? 1.25;
     const minGapPx = 0.5;
     const mergeSameStyleLines = this.options.semanticPositionedLayout?.mergeSameStyleLines === true;
 
+    const aggressiveMerge = (items: PDFTextContent[]): PDFTextContent[] => {
+      if (items.length <= 1) return items;
+      const sorted = [...items].sort((a, b) => a.x - b.x);
+      const merged: PDFTextContent[] = [];
+      let current: PDFTextContent | null = null;
+      
+      // Helper to estimate width based on text and font size
+      const estimateWidth = (item: PDFTextContent): number => {
+        const text = (item.text || '').replace(/\s+/g, '');
+        if (text.length === 0) return item.width || 0;
+        // If width is available and reasonable, use it
+        if (item.width && item.width > 0 && item.width > text.length * item.fontSize * 0.1) {
+          return item.width;
+        }
+        // Otherwise estimate: average char is ~0.5 of font size
+        return text.length * item.fontSize * 0.5;
+      };
+
+      const isShortAlphaFragment = (s: string): boolean => /^[A-Za-z]{1,3}$/.test((s || '').trim());
+      
+      for (const item of sorted) {
+        if (!current) {
+          current = { ...item };
+          continue;
+        }
+        
+        // Normalize font families for comparison
+        const curFont = (current.fontFamily || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const itemFont = (item.fontFamily || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        
+        // Check if same font family
+        const sameFont = curFont === itemFont;
+        
+        // Calculate gap using estimated width to handle PDFium width issues
+        const curWidthEst = estimateWidth(current);
+        const curWidthForGap = (current.width && current.width > 0 && current.width <= curWidthEst * 1.25)
+          ? current.width
+          : curWidthEst;
+        const gap = item.x - (current.x + curWidthForGap);
+        const avgFontSize = Math.max((current.fontSize + item.fontSize) / 2, 6);
+
+        const baselineTol = Math.max(1, avgFontSize * 0.6);
+        const sameBaseline = Math.abs((current.y || 0) - (item.y || 0)) <= baselineTol;
+
+        const minFs = Math.max(1, Math.min(current.fontSize || 1, item.fontSize || 1));
+        const maxFs = Math.max(1, Math.max(current.fontSize || 1, item.fontSize || 1));
+        const fontRatioOk = maxFs / minFs <= 1.9;
+        
+        // Check if items look fragmented (short text segments)
+        const curLen = (current.text || '').trim().length;
+        const itemLen = (item.text || '').trim().length;
+        const looksFragmented = curLen <= 15 || itemLen <= 8;
+        
+        // Aggressive merge conditions for same-font items on same line
+        // Be VERY aggressive for fragmented text on same line
+        const shouldMerge = sameFont && sameBaseline && fontRatioOk && (
+          // Overlapping or negative gap - always merge
+          gap < 0 ||
+          // Very small gap (kerning) - always merge
+          gap < avgFontSize * 0.5 ||
+          // Fragmented text with reasonable gap - up to 4x font size
+          (looksFragmented && gap < avgFontSize * 4) ||
+          // Normal text with moderate gap
+          (!looksFragmented && gap < avgFontSize * 2)
+        );
+        
+        if (shouldMerge) {
+          // Determine if we need a space between
+          // Insert space if gap is significant OR if current ends with letter and next starts with letter
+          const curText = current.text || '';
+          const itemText = item.text || '';
+          const curEndsAlpha = /[a-zA-Z]$/.test(curText);
+          const itemStartsAlpha = /^[a-zA-Z]/.test(itemText);
+          const curEndsLower = /[a-z]$/.test(curText);
+          const itemStartsUpper = /^[A-Z]/.test(itemText);
+          const isCaseBoundary = curEndsLower && itemStartsUpper;
+          
+          // Be more aggressive about inserting spaces between words
+          // Lower threshold from 0.25 to 0.15 for general gaps
+          // Lower threshold from 0.65 to 0.35 for alpha-to-alpha
+          // Case boundaries (lower->Upper) almost always need a space
+          const needsSpace = (
+            // Case boundary with any positive gap - very likely a word break
+            (isCaseBoundary && gap > avgFontSize * 0.05) ||
+            // General gap threshold - lowered for better word separation
+            (gap > avgFontSize * 0.15 &&
+            !/[([{]$/.test(curText) &&
+            !/^[)\]},.:;!?]/.test(itemText) &&
+            !(isShortAlphaFragment(curText.slice(-3)) && isShortAlphaFragment(itemText.slice(0, 3))))
+          ) || (
+            // Alpha-to-alpha with moderate gap - lowered threshold
+            curEndsAlpha && itemStartsAlpha && gap > avgFontSize * 0.35 &&
+            !(isShortAlphaFragment(curText.slice(-3)) && isShortAlphaFragment(itemText.slice(0, 3)))
+          );
+          
+          current.text = curText + (needsSpace ? ' ' : '') + itemText;
+          const itemWidthEst = estimateWidth(item);
+          const itemWidthForEnd = (item.width && item.width > 0 && item.width <= itemWidthEst * 1.25) ? item.width : itemWidthEst;
+          const endX = Math.max(current.x + curWidthForGap, item.x + itemWidthForEnd);
+          current.width = endX - current.x;
+          current.height = Math.max(current.height, item.height);
+          // Use the larger font size for the merged run
+          current.fontSize = Math.max(current.fontSize, item.fontSize);
+          current.y = ((current.y || 0) * (current.fontSize || 1) + (item.y || 0) * (item.fontSize || 1)) / Math.max(1, (current.fontSize || 1) + (item.fontSize || 1));
+        } else {
+          merged.push(current);
+          current = { ...item };
+        }
+      }
+      
+      if (current) merged.push(current);
+      return merged;
+    };
+    
     const getMergedRunsForLine = (line: (typeof analysis.regions)[number]['lines'][number]): PDFTextContent[] => {
-      return line.mergedRuns && line.mergedRuns.length > 0
+      const initialMerge = line.mergedRuns && line.mergedRuns.length > 0
         ? line.mergedRuns.map((run): PDFTextContent => ({
             text: run.text,
             x: run.x,
@@ -654,6 +855,18 @@ export class HTMLGenerator {
             fontInfo: undefined
           }))
         : this.mergeTextRuns(line.items);
+      
+      // Apply second-pass aggressive merge to fix remaining fragmentation
+      const merged = aggressiveMerge(initialMerge);
+      // Then run a conservative lexical enhancement pass to insert
+      // missing word boundaries inside long alphabetic sequences.
+      const enhanced = this.enhanceRunsWithLexicalModel(merged);
+      
+      // Apply post-processing to fix merged words like "connectingfinance" -> "connecting finance"
+      return enhanced.map((run) => ({
+        ...run,
+        text: this.wordValidator.fixMergedText(run.text || '')
+      }));
     };
 
     const html: string[] = [];
@@ -682,7 +895,7 @@ export class HTMLGenerator {
           const run = mergedRuns[runIdx]!;
           const prevRun = runIdx > 0 ? mergedRuns[runIdx - 1]! : null;
           const nextRun = runIdx < mergedRuns.length - 1 ? mergedRuns[runIdx + 1]! : null;
-          const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+          const fontClass = this.getFontClass(run, fontMappings);
 
           const abs = this.layoutEngine.transformCoordinates(run.x, run.y, page.height, run.height);
           const xRel = this.normalizeCoord(abs.x - regionLeft);
@@ -707,29 +920,46 @@ export class HTMLGenerator {
             ? Math.max(0, this.normalizeCoord(nextXRel - xRel - whitespace.paddingLeft - whitespace.paddingRight - minGapPx))
             : Math.max(0, this.normalizeCoord(regionWidth - xRel - whitespace.paddingLeft - whitespace.paddingRight));
 
-          const resolver = getDefaultFontMetricsResolver();
-          let measuredTextWidth = 0;
-          try {
-            if (run.fontInfo) {
-              const match = resolver.resolveDetectedFont({
-                name: run.fontInfo.name,
-                family: run.fontFamily || run.fontInfo.name,
-                weight: run.fontWeight || 400,
-                style: run.fontStyle || 'normal',
-                embedded: run.fontInfo.embedded || false,
-                metrics: this.normalizePdfFontMetrics(run.fontInfo.metrics),
-                encoding: run.fontInfo.encoding
-              });
-              const textToMeasure = run.text || '';
-              for (let i = 0; i < textToMeasure.length; i++) {
-                measuredTextWidth += resolver.estimateCharWidthPx(textToMeasure[i]!, match.record, fontSize);
+          // Prefer Pdfium artifacts unless clearly wrong (e.g., 1px width when fontSize is 10px+)
+          const textLen = (run.text || '').length;
+          const minReasonableWidth = textLen > 1 ? fontSize * 0.1 * textLen : fontSize * 0.05;
+          const pdfiumWidthIsValid = runWidth > 0 && runWidth >= minReasonableWidth;
+          
+          let desiredRunWidth = runWidth;
+          
+          // Only use font metrics when Pdfium width is missing or clearly corrupted
+          if (!pdfiumWidthIsValid) {
+            const resolver = getDefaultFontMetricsResolver();
+            let measuredTextWidth = 0;
+            try {
+              if (run.fontInfo) {
+                const match = resolver.resolveDetectedFont({
+                  name: run.fontInfo.name,
+                  family: run.fontFamily || run.fontInfo.name,
+                  weight: run.fontWeight || 400,
+                  style: run.fontStyle || 'normal',
+                  embedded: run.fontInfo.embedded || false,
+                  metrics: this.normalizePdfFontMetrics(run.fontInfo.metrics),
+                  encoding: run.fontInfo.encoding
+                });
+                const textToMeasure = run.text || '';
+                for (let i = 0; i < textToMeasure.length; i++) {
+                  measuredTextWidth += resolver.estimateCharWidthPx(textToMeasure[i]!, match.record, fontSize);
+                }
               }
+            } catch {
+              measuredTextWidth = 0;
             }
-          } catch {
-            measuredTextWidth = 0;
+            
+            if (measuredTextWidth > 0) {
+              desiredRunWidth = this.normalizeCoord(measuredTextWidth);
+            } else {
+              desiredRunWidth = this.normalizeCoord(textLen * fontSize * 0.5);
+            }
+          } else {
+            desiredRunWidth = this.normalizeCoord(runWidth);
           }
-
-          const desiredRunWidth = this.normalizeCoord(Math.max(runWidth, measuredTextWidth));
+          
           const finalRunWidth = widthBudget > 0
             ? Math.min(desiredRunWidth, widthBudget)
             : desiredRunWidth;
@@ -775,7 +1005,25 @@ export class HTMLGenerator {
         return a.minX - b.minX;
       });
 
+      const lineLooksLexicalParagraph = (line: (typeof orderedLines)[number]): boolean => {
+        const raw = line.items.map((r) => r.text || '').join(' ');
+        const lettersOnly = raw.replace(/[^A-Za-z]+/g, ' ');
+        const tokens = lettersOnly
+          .split(/\s+/)
+          .map((t) => t.trim())
+          .filter((t) => t.length >= 3 && t.length <= 24);
+        if (tokens.length < 3) return false;
+        let good = 0;
+        for (const tok of tokens) {
+          const res = this.wordValidator.validate(tok);
+          if (res === 'complete' || res === 'prefix') good += 1;
+        }
+        const coverage = good / tokens.length;
+        return coverage >= 0.45;
+      };
+
       const lineLooksStructuredAnyStyle = (line: (typeof orderedLines)[number]): boolean => {
+        if (lineLooksLexicalParagraph(line)) return false;
         const runs = line.items.filter((r) => (r.text || '').trim().length > 0);
         if (runs.length < 2) return false;
         const sorted = [...runs].sort((a, b) => a.x - b.x);
@@ -845,31 +1093,54 @@ export class HTMLGenerator {
 
       if (forceAbsoluteRegion) {
         html.push('<div class="pdf-sem-lines" data-layout="absolute" style="position: relative; width: 100%; height: 100%;">');
+        let prevAbsLineBottomRel: number | null = null;
         for (const line of orderedLines) {
           const mergedRuns: PDFTextContent[] = getMergedRunsForLine(line);
           const lineBox = this.computeLineBoxFromRuns(mergedRuns, page.height, regionTop, absLineHeightFactor);
-          const lineTopRel = Math.max(0, lineBox.lineTopRel);
-          const maxRunHeight = mergedRuns.reduce((acc, r) => {
-            const h = this.normalizeCoord(Math.max(1, this.calculateVisualHeight(r, absLineHeightFactor)));
-            return Math.max(acc, h);
-          }, 1);
-          const lineHeight = Math.max(lineBox.lineHeight, maxRunHeight);
-          html.push(
-            `<div class="pdf-sem-line" style="position: absolute; left: 0; top: ${lineTopRel}px; width: ${regionWidth}px; height: ${lineHeight}px;">`
-          );
-          for (const run of mergedRuns) {
-            const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+          let lineTopRel = Math.max(0, lineBox.lineTopRel);
+          const runGeoms = mergedRuns.map((run) => {
             const visualHeight = this.calculateVisualHeight(run, absLineHeightFactor);
             const runHeight = Math.max(1, this.normalizeCoord(visualHeight));
             const abs = this.layoutEngine.transformCoordinates(run.x, run.y, page.height, runHeight);
+            return { run, runHeight, abs };
+          });
+
+          const maxRunHeight = runGeoms.reduce((acc, g) => Math.max(acc, g.runHeight), 1);
+          const maxFontSize = mergedRuns.reduce((acc, r) => {
+            const fs = typeof r.fontSize === 'number' && Number.isFinite(r.fontSize) ? r.fontSize : 12;
+            return Math.max(acc, fs);
+          }, 1);
+          const lineHeight = Math.max(lineBox.lineHeight, maxRunHeight);
+
+          if (prevAbsLineBottomRel !== null) {
+            const minSeparation = Math.max(minGapPx, maxFontSize * 0.2, 1);
+            if (lineTopRel < prevAbsLineBottomRel + minSeparation) {
+              lineTopRel = this.normalizeCoord(prevAbsLineBottomRel + minSeparation);
+            }
+          }
+
+          const baselineY = (() => {
+            const ys = runGeoms.map((g) => g.abs.y).filter((y) => Number.isFinite(y));
+            if (ys.length === 0) return regionTop + lineTopRel;
+            ys.sort((a, b) => a - b);
+            return ys[Math.floor(ys.length / 2)]!;
+          })();
+
+          html.push(
+            `<div class="pdf-sem-line" style="position: absolute; left: 0; top: ${lineTopRel}px; width: ${regionWidth}px; height: ${lineHeight}px;">`
+          );
+          for (const geom of runGeoms) {
+            const { run, runHeight, abs } = geom;
+            const fontClass = this.getFontClass(run, fontMappings);
             const rel = {
               x: this.normalizeCoord(abs.x - regionLeft),
-              y: this.normalizeCoord(abs.y - regionTop - lineTopRel)
+              y: this.normalizeCoord(baselineY - regionTop - lineTopRel)
             };
             const runForRender: PDFTextContent = { ...run, height: runHeight };
             html.push(this.layoutEngine.generateTextElement(runForRender, page.height, fontClass, { coordsOverride: rel }));
           }
           html.push('</div>');
+          prevAbsLineBottomRel = this.normalizeCoord(lineTopRel + lineHeight);
         }
         html.push('</div>');
         html.push('</div>');
@@ -1004,7 +1275,7 @@ export class HTMLGenerator {
           for (const r of sorted) {
             const t = r.text || '';
             if (!t.trim()) continue;
-            const fc = this.getFontClass(r.fontFamily, fontMappings);
+            const fc = this.getFontClass(r, fontMappings);
             ensureJoined(out, r, fc, t);
           }
           return out;
@@ -1019,10 +1290,10 @@ export class HTMLGenerator {
             `max-width: ${g.width}px`,
             `min-height: ${g.reservedHeight}px`,
             `line-height: ${g.runHeight}px`,
-            'white-space: normal',
-            'overflow-wrap: anywhere',
-            'word-break: break-word',
-            'hyphens: auto',
+            'white-space: pre',
+            'overflow-wrap: normal',
+            'word-break: normal',
+            'hyphens: none',
             'overflow: visible'
           ];
           const inner = g.segments.map((s) => {
@@ -1177,7 +1448,7 @@ export class HTMLGenerator {
           const run = mergedRuns[runIdx]!;
           const prevRun = runIdx > 0 ? mergedRuns[runIdx - 1]! : null;
           const nextRun = runIdx < mergedRuns.length - 1 ? mergedRuns[runIdx + 1]! : null;
-          const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+          const fontClass = this.getFontClass(run, fontMappings);
           
           // Transform PDF coordinates to HTML coordinates (same as preserve fidelity)
           const abs = this.layoutEngine.transformCoordinates(run.x, run.y, page.height, run.height);
@@ -1215,29 +1486,46 @@ export class HTMLGenerator {
             ? Math.max(0, this.normalizeCoord(nextXRel - xRel - whitespace.paddingLeft - whitespace.paddingRight - minGapPx))
             : Math.max(0, this.normalizeCoord(regionWidth - xRel - whitespace.paddingLeft - whitespace.paddingRight));
 
-          const resolver = getDefaultFontMetricsResolver();
-          let measuredTextWidth = 0;
-          try {
-            if (run.fontInfo) {
-              const match = resolver.resolveDetectedFont({
-                name: run.fontInfo.name,
-                family: run.fontFamily || run.fontInfo.name,
-                weight: run.fontWeight || 400,
-                style: run.fontStyle || 'normal',
-                embedded: run.fontInfo.embedded || false,
-                metrics: this.normalizePdfFontMetrics(run.fontInfo.metrics),
-                encoding: run.fontInfo.encoding
-              });
-              const textToMeasure = run.text || '';
-              for (let i = 0; i < textToMeasure.length; i++) {
-                measuredTextWidth += resolver.estimateCharWidthPx(textToMeasure[i]!, match.record, fontSize);
+          // Prefer Pdfium artifacts unless clearly wrong (e.g., 1px width when fontSize is 10px+)
+          const textLen = (run.text || '').length;
+          const minReasonableWidth = textLen > 1 ? fontSize * 0.1 * textLen : fontSize * 0.05;
+          const pdfiumWidthIsValid = runWidth > 0 && runWidth >= minReasonableWidth;
+          
+          let desiredRunWidth = runWidth;
+          
+          // Only use font metrics when Pdfium width is missing or clearly corrupted
+          if (!pdfiumWidthIsValid) {
+            const resolver = getDefaultFontMetricsResolver();
+            let measuredTextWidth = 0;
+            try {
+              if (run.fontInfo) {
+                const match = resolver.resolveDetectedFont({
+                  name: run.fontInfo.name,
+                  family: run.fontFamily || run.fontInfo.name,
+                  weight: run.fontWeight || 400,
+                  style: run.fontStyle || 'normal',
+                  embedded: run.fontInfo.embedded || false,
+                  metrics: this.normalizePdfFontMetrics(run.fontInfo.metrics),
+                  encoding: run.fontInfo.encoding
+                });
+                const textToMeasure = run.text || '';
+                for (let i = 0; i < textToMeasure.length; i++) {
+                  measuredTextWidth += resolver.estimateCharWidthPx(textToMeasure[i]!, match.record, fontSize);
+                }
               }
+            } catch {
+              measuredTextWidth = 0;
             }
-          } catch {
-            measuredTextWidth = 0;
+            
+            if (measuredTextWidth > 0) {
+              desiredRunWidth = this.normalizeCoord(measuredTextWidth);
+            } else {
+              desiredRunWidth = this.normalizeCoord(textLen * fontSize * 0.5);
+            }
+          } else {
+            desiredRunWidth = this.normalizeCoord(runWidth);
           }
-
-          const desiredRunWidth = this.normalizeCoord(Math.max(runWidth, measuredTextWidth));
+          
           const finalRunWidth = widthBudget > 0
             ? Math.min(desiredRunWidth, widthBudget)
             : desiredRunWidth;
@@ -1311,7 +1599,10 @@ export class HTMLGenerator {
       });
 
       for (const line of orderedLines) {
-        const mergedRuns = this.mergeTextRuns(line.items);
+        const mergedRuns = this.mergeTextRuns(line.items).map((run) => ({
+          ...run,
+          text: this.wordValidator.fixMergedText(run.text || '')
+        }));
         const lineTop = Math.max(0, Math.round((line.rect.top - region.rect.top) * 1000) / 1000);
 
         const avgFontSize =
@@ -1331,7 +1622,7 @@ export class HTMLGenerator {
         );
 
         for (const run of mergedRuns) {
-          const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+          const fontClass = this.getFontClass(run, fontMappings);
           const abs = this.layoutEngine.transformCoordinates(run.x, run.y, page.height, run.height);
           const rel = {
             x: abs.x - region.rect.left,
@@ -1360,8 +1651,13 @@ export class HTMLGenerator {
       for (const line of region.lines) {
         const mergedRuns = this.mergeTextRuns(line.items);
         for (const run of mergedRuns) {
-          const fontClass = this.getFontClass(run.fontFamily, fontMappings);
-          out.push(this.layoutEngine.generateSvgTextElement(run, page.height, fontClass));
+          // Apply post-processing to fix merged words like "connectingfinance"
+          const fixedRun = {
+            ...run,
+            text: this.wordValidator.fixMergedText(run.text || '')
+          };
+          const fontClass = this.getFontClass(fixedRun, fontMappings);
+          out.push(this.layoutEngine.generateSvgTextElement(fixedRun, page.height, fontClass));
         }
       }
     }
@@ -1421,17 +1717,24 @@ export class HTMLGenerator {
         const analysis = this.regionLayoutAnalyzer.analyze(page);
         for (const region of analysis.regions) {
           for (const line of region.lines) {
-            const mergedRuns = this.mergeTextRuns(line.items);
+            const mergedRuns = this.mergeTextRuns(line.items).map((run) => ({
+              ...run,
+              text: this.wordValidator.fixMergedText(run.text || '')
+            }));
             for (const run of mergedRuns) {
-              const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+              const fontClass = this.getFontClass(run, fontMappings);
               parts.push(this.layoutEngine.generateTextElement(run, page.height, fontClass));
             }
           }
         }
       } else {
         for (const text of page.content.text) {
-          const fontClass = this.getFontClass(text.fontFamily, fontMappings);
-          parts.push(this.layoutEngine.generateTextElement(text, page.height, fontClass));
+          const fixedText = {
+            ...text,
+            text: this.wordValidator.fixMergedText(text.text || '')
+          };
+          const fontClass = this.getFontClass(fixedText, fontMappings);
+          parts.push(this.layoutEngine.generateTextElement(fixedText, page.height, fontClass));
         }
       }
     }
@@ -1578,7 +1881,7 @@ export class HTMLGenerator {
           }
 
           const dominant = paragraph.dominant;
-          const fontClass = this.getFontClass(dominant.fontFamily, fontMappings);
+          const fontClass = this.getFontClass(dominant, fontMappings);
           const lineHeight = Math.max(1, Math.round(paragraph.lineHeight * 1000) / 1000);
           const flowStyle: Record<string, string> = {
             position: 'relative',
@@ -1768,7 +2071,10 @@ export class HTMLGenerator {
             maxHeightBeforeNext !== null && maxHeightBeforeNext > 0.5
               ? Math.max(1, Math.min(lineHeight, maxHeightBeforeNext))
               : lineHeight;
-          const mergedRuns = this.mergeTextRuns(line.items);
+          const mergedRuns = this.mergeTextRuns(line.items).map((run) => ({
+            ...run,
+            text: this.wordValidator.fixMergedText(run.text || '')
+          }));
 
           const canRelativeRebuild = passes >= 2 && !line.hasRotation;
 
@@ -1783,7 +2089,7 @@ export class HTMLGenerator {
 
             let cursorX = 0;
             for (const run of mergedRuns) {
-              const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+              const fontClass = this.getFontClass(run, fontMappings);
               const xRel = run.x - region.rect.left;
               const gap = xRel - cursorX;
               if (gap > 0.5) {
@@ -1803,7 +2109,7 @@ export class HTMLGenerator {
             );
 
             for (const run of mergedRuns) {
-              const fontClass = this.getFontClass(run.fontFamily, fontMappings);
+              const fontClass = this.getFontClass(run, fontMappings);
               const abs = this.layoutEngine.transformCoordinates(run.x, run.y, page.height, run.height);
               const rel = {
                 x: abs.x - region.rect.left,
@@ -1826,7 +2132,7 @@ export class HTMLGenerator {
 
       for (const paragraph of region.paragraphs) {
         const dominant = paragraph.dominant;
-        const fontClass = this.getFontClass(dominant.fontFamily, fontMappings);
+        const fontClass = this.getFontClass(dominant, fontMappings);
         const lineHeight = Math.max(1, Math.round(paragraph.lineHeight * 1000) / 1000);
         const flowStyle: Record<string, string> = {
           position: 'relative',
@@ -1912,7 +2218,7 @@ export class HTMLGenerator {
       }
 
       const sample = tok.sample;
-      const fontClass = this.getFontClass(sample.fontFamily, fontMappings);
+      const fontClass = this.getFontClass(sample.fontInfo?.name || sample.fontFamily, fontMappings);
       out.push(this.layoutEngine.generateInlineTextSpan({ ...sample, text: tok.text }, fontClass));
     }
     return out.join('');
@@ -1946,13 +2252,31 @@ export class HTMLGenerator {
       .replace(/-+$/, '');
   }
 
-  private getFontClass(fontFamily: string, fontMappings: FontMapping[]): string {
-    const key = normalizeFontName(fontFamily || '').family;
+  private getFontClass(fontOrText: string | PDFTextContent, fontMappings: FontMapping[]): string {
+    const candidates: string[] = [];
+    const rawCandidates: string[] = [];
+
+    if (typeof fontOrText === 'string') {
+      rawCandidates.push(fontOrText);
+      const key = normalizeFontName(fontOrText || '').family;
+      if (key) candidates.push(key);
+    } else {
+      const byInfo = fontOrText.fontInfo?.name || '';
+      const byFamily = fontOrText.fontFamily || '';
+      if (byInfo) rawCandidates.push(byInfo);
+      if (byFamily) rawCandidates.push(byFamily);
+
+      const infoKey = normalizeFontName(byInfo).family;
+      const famKey = normalizeFontName(byFamily).family;
+      if (infoKey) candidates.push(infoKey);
+      if (famKey && famKey !== infoKey) candidates.push(famKey);
+    }
 
     const mapping = fontMappings.find((m) => {
       const famKey = normalizeFontName(m.detectedFont.family || '').family;
       const nameKey = normalizeFontName(m.detectedFont.name || '').family;
-      return (key && famKey === key) || (key && nameKey === key) || m.detectedFont.family === fontFamily;
+      return candidates.some((c) => (c && famKey === c) || (c && nameKey === c)) ||
+        rawCandidates.some((r) => (r && m.detectedFont.family === r) || (r && m.detectedFont.name === r));
     });
 
     if (!mapping) return 'font-default';

@@ -109,7 +109,14 @@ export class PDFJSTextExtractor {
     const rotationDeg = (rotationRad * 180) / Math.PI;
 
     const style = item.fontName ? styles[item.fontName] : null;
-    const fontSize = style?.fontSize || item.height || 12;
+    
+    // Derive fontSize: prefer style.fontSize, but if it's suspiciously low (<=2px)
+    // and height is reasonable (>=4px), use height as fontSize instead.
+    // This handles corrupted PDFs where fontSize is 1px but height values are correct.
+    const rawFontSize = style?.fontSize || 12;
+    const itemHeight = typeof item.height === 'number' ? item.height : 0;
+    const fontSize = (rawFontSize <= 2 && itemHeight >= 4) ? itemHeight : (rawFontSize || itemHeight || 12);
+    
     const fontFamily = style?.fontFamily || 'Arial';
     const { fontWeight: weight, fontStyle: styleHint } = deriveFontWeightAndStyle({
       fontName: style?.fontName || item.fontName || '',

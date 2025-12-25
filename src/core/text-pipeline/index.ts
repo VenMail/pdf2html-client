@@ -6,3 +6,8 @@ export * from './classifier-db.js';
 export * from './rule-classifier.js';
 export * from './reconstruct.js';
 export * from './pipeline.js';
+export * from './word-validator.js';
+export * from './predictive-model.js';
+export * from './smart-boundary-classifier.js';
+export * from './text-post-processor.js';
+export * from './unified-boundary-detector.js';

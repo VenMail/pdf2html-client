@@ -1,6 +1,7 @@
 import type { PDFDocument, PDFParserOptions } from '../types/pdf.js';
 import { PDFiumWrapper } from './pdfium-wrapper.js';
 import { UnPDFWrapper } from './unpdf-wrapper.js';
+import { EnhancedTextStyler } from './enhanced-text-styler.js';
 
 export type ParserStrategy = 'auto' | 'pdfium' | 'unpdf';
 
@@ -83,6 +84,7 @@ export class PDFParser {
       return await this.pdfiumWrapper.parseDocument(data, options);
     }
 
+    // Strategy is 'auto' - use combination for best results
     try {
       const pdfiumDoc = await this.pdfiumWrapper.parseDocument(data, options);
       if (options.extractText) {
@@ -92,7 +94,40 @@ export class PDFParser {
             if (!this.unpdfWrapper) this.unpdfWrapper = new UnPDFWrapper();
             const unpdfDoc = await this.unpdfWrapper.parseDocument(data, options);
             const unpdfQuality = this.scoreTextQuality(unpdfDoc);
-            if (unpdfQuality > quality + 0.08) {
+            
+            // Check if we're in semantic mode (preserveLayout + textLayout: 'semantic' OR textLayout: 'flow')
+            const isSemanticMode = this.isSemanticModeConfigured();
+            
+            if (isSemanticMode) {
+              // In semantic mode: if pdfium text is garbled, immediately replace all text with unpdf text
+              const semanticType = this.getSemanticType();
+              console.warn(
+                `PDFParser ${semanticType} semantic mode: PDFium text quality low (${quality.toFixed(2)}). Using UnPDF text extraction (${unpdfQuality.toFixed(2)}).`
+              );
+              
+              // Replace all text content with enhanced unpdf text while keeping pdfium's non-text content
+              const styler = new EnhancedTextStyler();
+              
+              for (let i = 0; i < pdfiumDoc.pages.length && i < unpdfDoc.pages.length; i++) {
+                const p = pdfiumDoc.pages[i];
+                const u = unpdfDoc.pages[i];
+                if (!p || !u) continue;
+                if (!p.content || !u.content) continue;
+                
+                const pdfiumText = p.content.text || [];
+                const unpdfText = u.content.text || [];
+                
+                if (unpdfText.length > 0) {
+                  // Enhance unpdf text with styling from pdfium text
+                  const enhancedText = styler.enhanceUnpdfTextWithStyling(pdfiumText, unpdfText);
+                  const contentEnhanced = styler.enhanceContentBasedStyling(enhancedText);
+                  p.content.text = contentEnhanced;
+                }
+              }
+              
+              return pdfiumDoc;
+            } else if (unpdfQuality > quality + 0.08) {
+              // Non-semantic mode: use existing logic
               console.warn(
                 `PDFParser auto: PDFium text quality low (${quality.toFixed(2)}). Using UnPDF result (${unpdfQuality.toFixed(2)}).`
               );
@@ -120,6 +155,81 @@ export class PDFParser {
       if (!this.unpdfWrapper) this.unpdfWrapper = new UnPDFWrapper();
       return await this.unpdfWrapper.parseDocument(data, options);
     }
+  }
+
+  /**
+   * Get the type of semantic mode being used
+   */
+  private getSemanticType(): string {
+    const g = globalThis as unknown as { 
+      __PDF2HTML_CONFIG__?: {
+        htmlOptions?: {
+          preserveLayout?: boolean;
+          textLayout?: string;
+        };
+      };
+    };
+    
+    const config = g.__PDF2HTML_CONFIG__;
+    if (config?.htmlOptions) {
+      const { preserveLayout, textLayout } = config.htmlOptions;
+      
+      // Positioned semantic: preserveLayout + textLayout: 'semantic'
+      if (preserveLayout === true && textLayout === 'semantic') {
+        return 'positioned';
+      }
+      
+      // Flow semantic: textLayout: 'flow'
+      if (textLayout === 'flow') {
+        return 'flow';
+      }
+    }
+    
+    return 'unknown';
+  }
+
+  /**
+   * Check if semantic mode is configured in the environment
+   * This is a heuristic check since we don't have direct access to the HTML generation config
+   */
+  private isSemanticModeConfigured(): boolean {
+    // Check if semantic mode is indicated via environment variable or global flag
+    const g = globalThis as unknown as { 
+      __PDF2HTML_SEMANTIC_MODE__?: boolean;
+      __PDF2HTML_CONFIG__?: {
+        htmlOptions?: {
+          preserveLayout?: boolean;
+          textLayout?: string;
+        };
+      };
+    };
+    
+    // Check explicit semantic mode flag
+    if (g.__PDF2HTML_SEMANTIC_MODE__ === true) return true;
+    
+    // Check HTML generation config if available
+    const config = g.__PDF2HTML_CONFIG__;
+    if (config?.htmlOptions) {
+      const { preserveLayout, textLayout } = config.htmlOptions;
+      
+      // Positioned semantic: preserveLayout + textLayout: 'semantic'
+      if (preserveLayout === true && textLayout === 'semantic') {
+        return true;
+      }
+      
+      // Flow semantic: textLayout: 'flow'
+      if (textLayout === 'flow') {
+        return true;
+      }
+    }
+    
+    // Check environment variable
+    if (typeof process !== 'undefined') {
+      const env = (process as unknown as { env?: Record<string, string | undefined> }).env;
+      if (env?.PDF2HTML_SEMANTIC_MODE === '1') return true;
+    }
+    
+    return false;
   }
 
   async parseParallel(

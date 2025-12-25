@@ -204,6 +204,7 @@ export class UnPDFWrapper {
 
     try {
       if (typeof document !== 'undefined') {
+        // Browser environment - use DOM canvas
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
@@ -214,11 +215,17 @@ export class UnPDFWrapper {
         return canvas.toDataURL('image/png');
       }
 
+      // Node.js environment - use @napi-rs/canvas as required by unpdf
       const importCanvas = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>;
       const mod = await importCanvas('@napi-rs/canvas');
       const createCanvas = (mod as unknown as { createCanvas?: (w: number, h: number) => unknown }).createCanvas;
       const ImageDataCtor = (mod as unknown as { ImageData?: new (data: Uint8ClampedArray, w: number, h: number) => unknown }).ImageData;
-      if (!createCanvas || !ImageDataCtor) return null;
+      
+      if (!createCanvas || !ImageDataCtor) {
+        console.warn('@napi-rs/canvas not properly loaded. Ensure it is installed for Node.js image extraction.');
+        return null;
+      }
+      
       const canvas = createCanvas(width, height) as unknown as {
         getContext: (type: '2d') => { putImageData: (data: unknown, x: number, y: number) => void } | null;
         toDataURL?: (type?: string) => string;
@@ -231,31 +238,41 @@ export class UnPDFWrapper {
         return canvas.toDataURL('image/png');
       }
       return null;
-    } catch {
+    } catch (error) {
+      console.debug('Failed to convert pixels to PNG data URL:', error);
       return null;
     }
   }
 
   private async extractImagesFallbackUnpdf(pageNumber0: number): Promise<PDFImageContent[]> {
     const unpdf = await this.getUnpdf();
-    if (!this.document || typeof unpdf.extractImages !== 'function') return [];
+    if (!this.document || typeof unpdf.extractImages !== 'function') {
+      return [];
+    }
     await this.ensureOfficialPdfjs();
 
-    const extracted = await unpdf.extractImages(this.document as unknown, pageNumber0 + 1);
-    const images: PDFImageContent[] = [];
-    for (const img of extracted) {
-      const dataUrl = await this.pixelsToPngDataUrl(img.data, img.width, img.height, img.channels);
-      if (!dataUrl) continue;
-      images.push({
-        data: dataUrl,
-        format: 'png',
-        x: 0,
-        y: 0,
-        width: img.width,
-        height: img.height
-      });
+    try {
+      // Use the document proxy directly as required by unpdf extractImages API
+      const extracted = await unpdf.extractImages(this.document, pageNumber0 + 1);
+      const images: PDFImageContent[] = [];
+      
+      for (const img of extracted) {
+        const dataUrl = await this.pixelsToPngDataUrl(img.data, img.width, img.height, img.channels);
+        if (!dataUrl) continue;
+        images.push({
+          data: dataUrl,
+          format: 'png',
+          x: 0,
+          y: 0,
+          width: img.width,
+          height: img.height
+        });
+      }
+      return images;
+    } catch (error) {
+      console.debug('unpdf extractImages failed:', error);
+      return [];
     }
-    return images;
   }
 
   private async extractGraphics(pdfPage: PDFJSPage, pageHeight: number): Promise<PDFGraphicsContent[]> {
@@ -469,14 +486,15 @@ export class UnPDFWrapper {
 
     if (options.extractImages) {
       page.content.images = await this.extractImagesFallbackUnpdf(pageNumber);
+      
       if (page.content.images.length === 0) {
         try {
           const imageResult = await this.imageExtractor.extractImages(
             pdfPage as unknown as Parameters<PDFJSImageExtractor['extractImages']>[0]
           );
           page.content.images = imageResult.images;
-        } catch {
-          // ignore
+        } catch (error) {
+          console.debug('PDFJS fallback also failed:', error);
         }
       }
     }

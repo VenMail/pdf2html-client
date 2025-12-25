@@ -1,8 +1,12 @@
 # pdf2html-client
 
-Client-side PDF to HTML conversion with WASM parsing, optional OCR, and multiple layout strategies ranging from high-fidelity positioning to editable/semantic HTML.
+[![npm version](https://badge.fury.io/js/pdf2html-client.svg)](https://badge.fury.io/js/pdf2html-client)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.3+-blue.svg)](https://www.typescriptlang.org/)
 
-## Why another PDF to HTML Library?
+Advanced client-side PDF to HTML converter with WASM parsing, OCR support, and intelligent text layout reconstruction. Perfect for document management systems and web applications.
+
+## Key Features
 
  This library was built primarily to support high fidelity PDF/DOCX imports in [Venmail Drive](https://venia.cloud). Most PDF-to-HTML pipelines pick one tradeoff: either pixel-perfect output that is hard to edit, or “flow” output that drifts and overlaps. The goal is to provide a one-stop simple workflow for document imports that works with offline-first applications.
 
@@ -19,7 +23,7 @@ All of this runs in the browser (via pdfium or unpdf).
 
 - **WASM PDF parsing**
   - Primary: PDFium (WebAssembly)
-  - Fallback/alternative: `unpdf` (WIP))
+  - Fallback/alternative: `unpdf`
   - Select via `parserStrategy: 'auto' | 'pdfium' | 'unpdf'`
 - **Multiple text layout modes** (see below)
 - **Optional OCR for scanned PDFs**

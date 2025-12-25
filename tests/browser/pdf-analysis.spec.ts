@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const demoDir = join(__dirname, '../../demo');
-const pdfsDir = join(demoDir, 'pdfs');
+const pdfsDir = join(demoDir, 'demopdfs');
 
 interface PdfAnalysisResult {
   success: boolean;
@@ -53,7 +53,7 @@ test.describe('PDF Analysis', () => {
   for (const pdfInfo of testPDFs) {
     test(`should analyze ${pdfInfo.name}`, async ({ page }) => {
       const pdfPath = join(pdfsDir, pdfInfo.name);
-      if (!readFileSync(pdfPath)) {
+      if (!existsSync(pdfPath)) {
         test.skip();
         return;
       }
@@ -151,7 +151,7 @@ test.describe('PDF Analysis', () => {
 
   test('should analyze cv.pdf', async ({ page }) => {
     const pdfPath = join(demoDir, 'cv.pdf');
-    if (!readFileSync(pdfPath)) {
+    if (!existsSync(pdfPath)) {
       test.skip();
       return;
     }

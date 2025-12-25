@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import PDFUploader from './components/PDFUploader';
 import PDFViewer from './components/PDFViewer';
 import HTMLOutput from './components/HTMLOutput';
@@ -14,11 +14,21 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [outputMode, setOutputMode] = useState<'layout' | 'semantic'>('layout');
 
-  const [parserStrategy, setParserStrategy] = useState<'auto' | 'pdfium' | 'unpdf'>('pdfium');
+  const [responsive, setResponsive] = useState(true);
+  const [enableFontMapping, setEnableFontMapping] = useState(true);
+
+  const [textRenderMode, setTextRenderMode] = useState<'html' | 'svg'>('svg');
+  const [layoutTextLayout, setLayoutTextLayout] = useState<'absolute' | 'smart' | 'flow'>('absolute');
+
+  const [cssIncludeFonts, setCssIncludeFonts] = useState(true);
+  const [cssIncludeReset, setCssIncludeReset] = useState(true);
+  const [cssIncludePrint, setCssIncludePrint] = useState(true);
+
+  const [parserStrategy, setParserStrategy] = useState<'auto' | 'pdfium' | 'unpdf'>('auto');
 
   const [semanticPreserveLayout, setSemanticPreserveLayout] = useState(true);
   const [semanticTextLayout, setSemanticTextLayout] = useState<'flow' | 'semantic'>('semantic');
-  const [textPipeline, setTextPipeline] = useState<'legacy' | 'v2'>('v2');
+  const [textPipeline, setTextPipeline] = useState<'legacy' | 'v2' | 'smart'>('smart');
   const [textClassifierProfile, setTextClassifierProfile] = useState<string>('latin-default');
   const [textLayoutPasses, setTextLayoutPasses] = useState<1 | 2>(2);
   const [semanticBlockGapFactor, setSemanticBlockGapFactor] = useState<number>(1.8);
@@ -27,6 +37,8 @@ function App() {
 
   const [semanticMergeSameStyleLines, setSemanticMergeSameStyleLines] = useState(true);
   const [semanticWhitespacePadding, setSemanticWhitespacePadding] = useState(true);
+
+  const [useFlexboxLayout, setUseFlexboxLayout] = useState(true);
 
   const [absElementLineHeightFactor, setAbsElementLineHeightFactor] = useState<number>(1.15);
   const [absRunLineHeightFactor, setAbsRunLineHeightFactor] = useState<number>(1.15);
@@ -41,6 +53,284 @@ function App() {
   const [enablePdfiumDebug, setEnablePdfiumDebug] = useState(false);
   const [pdfiumDebugData, setPdfiumDebugData] = useState<unknown[] | null>(null);
   const [decodeArtifact, setDecodeArtifact] = useState<unknown | null>(null);
+
+  type DemoConfig = {
+    outputMode: 'layout' | 'semantic';
+    responsive: boolean;
+    enableFontMapping: boolean;
+    textRenderMode: 'html' | 'svg';
+    layoutTextLayout: 'absolute' | 'smart' | 'flow';
+    cssIncludeFonts: boolean;
+    cssIncludeReset: boolean;
+    cssIncludePrint: boolean;
+    parserStrategy: 'auto' | 'pdfium' | 'unpdf';
+    semanticPreserveLayout: boolean;
+    semanticTextLayout: 'flow' | 'semantic';
+    textPipeline: 'legacy' | 'v2' | 'smart';
+    textClassifierProfile: string;
+    textLayoutPasses: 1 | 2;
+    semanticBlockGapFactor: number;
+    semanticHeadingThreshold: number;
+    semanticMaxHeadingLength: number;
+    semanticMergeSameStyleLines: boolean;
+    semanticWhitespacePadding: boolean;
+    useFlexboxLayout: boolean;
+    absElementLineHeightFactor: number;
+    absRunLineHeightFactor: number;
+    absLineHeightFactor: number;
+    lineGroupingFontSizeFactor: number;
+    layoutAdapterMode: 'none' | 'flex';
+    layoutAdapterRowThresholdPx: number;
+    layoutAdapterMinGapPx: number;
+    layoutAdapterPreserveVerticalGaps: boolean;
+    enablePdfiumDebug: boolean;
+  };
+
+  const defaultConfig: DemoConfig = {
+    outputMode: 'layout',
+    responsive: true,
+    enableFontMapping: true,
+    textRenderMode: 'svg',
+    layoutTextLayout: 'absolute',
+    cssIncludeFonts: true,
+    cssIncludeReset: true,
+    cssIncludePrint: true,
+    parserStrategy: 'auto',
+    semanticPreserveLayout: true,
+    semanticTextLayout: 'semantic',
+    textPipeline: 'smart',
+    textClassifierProfile: 'latin-default',
+    textLayoutPasses: 2,
+    semanticBlockGapFactor: 1.8,
+    semanticHeadingThreshold: 1.2,
+    semanticMaxHeadingLength: 100,
+    semanticMergeSameStyleLines: true,
+    semanticWhitespacePadding: true,
+    useFlexboxLayout: true,
+    absElementLineHeightFactor: 1.15,
+    absRunLineHeightFactor: 1.15,
+    absLineHeightFactor: 1.25,
+    lineGroupingFontSizeFactor: 0.85,
+    layoutAdapterMode: 'none',
+    layoutAdapterRowThresholdPx: 8,
+    layoutAdapterMinGapPx: 0.5,
+    layoutAdapterPreserveVerticalGaps: true,
+    enablePdfiumDebug: false
+  };
+
+  const fidelityPreset95: DemoConfig = {
+    ...defaultConfig,
+    outputMode: 'layout',
+    responsive: false,
+    enableFontMapping: true,
+    textRenderMode: 'svg',
+    layoutTextLayout: 'absolute',
+    parserStrategy: 'auto',
+    semanticPreserveLayout: true,
+    semanticTextLayout: 'semantic',
+    textLayoutPasses: 2,
+    textPipeline: 'smart',
+    useFlexboxLayout: true,
+    semanticMergeSameStyleLines: true,
+    semanticWhitespacePadding: true,
+    layoutAdapterMode: 'none'
+  };
+
+  const cvKnownGoodPreset: DemoConfig = {
+    ...defaultConfig,
+    outputMode: 'layout',
+    responsive: false,
+    enableFontMapping: true,
+    textRenderMode: 'svg',
+    layoutTextLayout: 'absolute',
+    parserStrategy: 'auto',
+    layoutAdapterMode: 'none'
+  };
+
+  const fidelityPresetMax: DemoConfig = {
+    ...defaultConfig,
+    outputMode: 'layout',
+    responsive: false,
+    enableFontMapping: true,
+    textRenderMode: 'svg',
+    layoutTextLayout: 'absolute',
+    parserStrategy: 'auto',
+    layoutAdapterMode: 'none'
+  };
+
+  const demoConfig = useMemo<DemoConfig>(
+    () => ({
+      outputMode,
+      responsive,
+      enableFontMapping,
+      textRenderMode,
+      layoutTextLayout,
+      cssIncludeFonts,
+      cssIncludeReset,
+      cssIncludePrint,
+      parserStrategy,
+      semanticPreserveLayout,
+      semanticTextLayout,
+      textPipeline,
+      textClassifierProfile,
+      textLayoutPasses,
+      semanticBlockGapFactor,
+      semanticHeadingThreshold,
+      semanticMaxHeadingLength,
+      semanticMergeSameStyleLines,
+      semanticWhitespacePadding,
+      useFlexboxLayout,
+      absElementLineHeightFactor,
+      absRunLineHeightFactor,
+      absLineHeightFactor,
+      lineGroupingFontSizeFactor,
+      layoutAdapterMode,
+      layoutAdapterRowThresholdPx,
+      layoutAdapterMinGapPx,
+      layoutAdapterPreserveVerticalGaps,
+      enablePdfiumDebug
+    }),
+    [
+      outputMode,
+      responsive,
+      enableFontMapping,
+      textRenderMode,
+      layoutTextLayout,
+      cssIncludeFonts,
+      cssIncludeReset,
+      cssIncludePrint,
+      parserStrategy,
+      semanticPreserveLayout,
+      semanticTextLayout,
+      textPipeline,
+      textClassifierProfile,
+      textLayoutPasses,
+      semanticBlockGapFactor,
+      semanticHeadingThreshold,
+      semanticMaxHeadingLength,
+      semanticMergeSameStyleLines,
+      semanticWhitespacePadding,
+      useFlexboxLayout,
+      absElementLineHeightFactor,
+      absRunLineHeightFactor,
+      absLineHeightFactor,
+      lineGroupingFontSizeFactor,
+      layoutAdapterMode,
+      layoutAdapterRowThresholdPx,
+      layoutAdapterMinGapPx,
+      layoutAdapterPreserveVerticalGaps,
+      enablePdfiumDebug
+    ]
+  );
+
+  const storageKey = 'pdf2html_demo_config_v2';
+
+  const encodeConfig = (cfg: DemoConfig): string => {
+    const json = JSON.stringify(cfg);
+    const b64 = btoa(unescape(encodeURIComponent(json)));
+    return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  };
+
+  const decodeConfig = (encoded: string): DemoConfig | null => {
+    try {
+      const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+      const pad = base64.length % 4 === 0 ? '' : '='.repeat(4 - (base64.length % 4));
+      const json = decodeURIComponent(escape(atob(base64 + pad)));
+      return JSON.parse(json) as DemoConfig;
+    } catch {
+      return null;
+    }
+  };
+
+  const applyConfig = (cfg: Partial<DemoConfig>): void => {
+    if (cfg.outputMode) setOutputMode(cfg.outputMode);
+    if (typeof cfg.responsive === 'boolean') setResponsive(cfg.responsive);
+    if (typeof cfg.enableFontMapping === 'boolean') setEnableFontMapping(cfg.enableFontMapping);
+    if (cfg.textRenderMode) setTextRenderMode(cfg.textRenderMode);
+    if (cfg.layoutTextLayout) setLayoutTextLayout(cfg.layoutTextLayout);
+    if (typeof cfg.cssIncludeFonts === 'boolean') setCssIncludeFonts(cfg.cssIncludeFonts);
+    if (typeof cfg.cssIncludeReset === 'boolean') setCssIncludeReset(cfg.cssIncludeReset);
+    if (typeof cfg.cssIncludePrint === 'boolean') setCssIncludePrint(cfg.cssIncludePrint);
+    if (cfg.parserStrategy) setParserStrategy(cfg.parserStrategy);
+
+    if (typeof cfg.semanticPreserveLayout === 'boolean') setSemanticPreserveLayout(cfg.semanticPreserveLayout);
+    if (cfg.semanticTextLayout) setSemanticTextLayout(cfg.semanticTextLayout);
+    if (cfg.textPipeline) setTextPipeline(cfg.textPipeline);
+    if (typeof cfg.textClassifierProfile === 'string') setTextClassifierProfile(cfg.textClassifierProfile);
+    if (cfg.textLayoutPasses) setTextLayoutPasses(cfg.textLayoutPasses);
+
+    if (typeof cfg.semanticBlockGapFactor === 'number') setSemanticBlockGapFactor(cfg.semanticBlockGapFactor);
+    if (typeof cfg.semanticHeadingThreshold === 'number') setSemanticHeadingThreshold(cfg.semanticHeadingThreshold);
+    if (typeof cfg.semanticMaxHeadingLength === 'number') setSemanticMaxHeadingLength(cfg.semanticMaxHeadingLength);
+
+    if (typeof cfg.semanticMergeSameStyleLines === 'boolean') setSemanticMergeSameStyleLines(cfg.semanticMergeSameStyleLines);
+    if (typeof cfg.semanticWhitespacePadding === 'boolean') setSemanticWhitespacePadding(cfg.semanticWhitespacePadding);
+    if (typeof cfg.useFlexboxLayout === 'boolean') setUseFlexboxLayout(cfg.useFlexboxLayout);
+
+    if (typeof cfg.absElementLineHeightFactor === 'number') setAbsElementLineHeightFactor(cfg.absElementLineHeightFactor);
+    if (typeof cfg.absRunLineHeightFactor === 'number') setAbsRunLineHeightFactor(cfg.absRunLineHeightFactor);
+    if (typeof cfg.absLineHeightFactor === 'number') setAbsLineHeightFactor(cfg.absLineHeightFactor);
+    if (typeof cfg.lineGroupingFontSizeFactor === 'number') setLineGroupingFontSizeFactor(cfg.lineGroupingFontSizeFactor);
+
+    if (cfg.layoutAdapterMode) setLayoutAdapterMode(cfg.layoutAdapterMode);
+    if (typeof cfg.layoutAdapterRowThresholdPx === 'number') setLayoutAdapterRowThresholdPx(cfg.layoutAdapterRowThresholdPx);
+    if (typeof cfg.layoutAdapterMinGapPx === 'number') setLayoutAdapterMinGapPx(cfg.layoutAdapterMinGapPx);
+    if (typeof cfg.layoutAdapterPreserveVerticalGaps === 'boolean') setLayoutAdapterPreserveVerticalGaps(cfg.layoutAdapterPreserveVerticalGaps);
+
+    if (typeof cfg.enablePdfiumDebug === 'boolean') setEnablePdfiumDebug(cfg.enablePdfiumDebug);
+  };
+
+  const copyToClipboard = async (value: string): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {
+      const el = document.createElement('textarea');
+      el.value = value;
+      el.style.position = 'fixed';
+      el.style.left = '-9999px';
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    }
+  };
+
+  const buildShareUrl = (cfg: DemoConfig): string => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('cfg', encodeConfig(cfg));
+    return url.toString();
+  };
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const encoded = params.get('cfg');
+      if (encoded) {
+        const decoded = decodeConfig(encoded);
+        if (decoded) {
+          applyConfig(decoded);
+          return;
+        }
+      }
+
+      const fromStorage = localStorage.getItem(storageKey);
+      if (fromStorage) {
+        const parsed = JSON.parse(fromStorage) as Partial<DemoConfig>;
+        applyConfig(parsed);
+      }
+    } catch {
+      void 0;
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(demoConfig));
+    } catch {
+      void 0;
+    }
+  }, [demoConfig]);
 
   const runConversion = async (file: File) => {
     setLoading(true);
@@ -63,14 +353,20 @@ function App() {
 
       const converter = new PDF2HTML({
         enableOCR: false,
-        enableFontMapping: false,
+        enableFontMapping,
         parserStrategy,
+        cssOptions: {
+          includeFonts: cssIncludeFonts,
+          includeReset: cssIncludeReset,
+          includePrint: cssIncludePrint
+        },
         htmlOptions: {
           format: 'html+inline-css',
           preserveLayout: outputMode === 'layout' ? true : semanticPreserveLayout,
-          responsive: true,
+          responsive,
           darkMode: false,
           imageFormat: 'base64',
+          textRenderMode,
           layoutTuning: {
             absElementLineHeightFactor,
             absRunLineHeightFactor,
@@ -83,6 +379,11 @@ function App() {
             minGapPx: layoutAdapterMinGapPx,
             preserveVerticalGaps: layoutAdapterPreserveVerticalGaps
           },
+          ...(outputMode === 'layout'
+            ? {
+                textLayout: layoutTextLayout
+              }
+            : {}),
           ...(outputMode === 'semantic'
             ? {
                 textLayout: semanticTextLayout,
@@ -90,6 +391,7 @@ function App() {
                 textPipeline,
                 textLayoutPasses,
                 textClassifierProfile,
+                useFlexboxLayout,
                 semanticLayout: {
                   blockGapFactor: semanticBlockGapFactor,
                   headingThreshold: semanticHeadingThreshold,
@@ -179,6 +481,76 @@ function App() {
             </label>
           </div>
 
+          <div className="config-actions">
+            <button
+              className="reconvert-button"
+              onClick={() => applyConfig(fidelityPreset95)}
+              disabled={loading}
+            >
+              Preset: 95%+ (editable)
+            </button>
+            <button
+              className="reconvert-button"
+              onClick={() => applyConfig(cvKnownGoodPreset)}
+              disabled={loading}
+              title="Matches cv-fidelity: layout + absolute + svg + font mapping"
+            >
+              Preset: CV (known-good)
+            </button>
+            <button
+              className="reconvert-button"
+              onClick={() => applyConfig(fidelityPresetMax)}
+              disabled={loading}
+              title="Max visual fidelity: positioned layout + SVG text layer"
+            >
+              Preset: max fidelity (SVG)
+            </button>
+            <button
+              className="reconvert-button"
+              onClick={() => applyConfig(defaultConfig)}
+              disabled={loading}
+            >
+              Reset config
+            </button>
+            <button
+              className="reconvert-button"
+              onClick={async () => {
+                await copyToClipboard(buildShareUrl(demoConfig));
+              }}
+              disabled={loading}
+              title="Copy a link that rehydrates the current tuning settings"
+            >
+              Copy share link
+            </button>
+            <button
+              className="reconvert-button"
+              onClick={async () => {
+                await copyToClipboard(JSON.stringify(demoConfig, null, 2));
+              }}
+              disabled={loading}
+              title="Copy current configuration JSON"
+            >
+              Export config
+            </button>
+            <button
+              className="reconvert-button"
+              onClick={() => {
+                const raw = window.prompt('Paste config JSON');
+                if (!raw) return;
+                try {
+                  const parsed = JSON.parse(raw) as Partial<DemoConfig>;
+                  applyConfig(parsed);
+                } catch {
+                  window.alert('Invalid JSON');
+                }
+              }}
+              disabled={loading}
+              title="Paste a previously exported config JSON"
+            >
+              Import config
+            </button>
+          </div>
+
           {outputMode === 'semantic' && (
             <div className="conversion-tuning">
               <div className="tuning-row">
@@ -231,13 +603,26 @@ function App() {
                 </label>
 
                 <label className="tuning-field">
+                  Flexbox layout
+                  <select
+                    value={useFlexboxLayout ? '1' : '0'}
+                    onChange={(e) => setUseFlexboxLayout(e.target.value === '1')}
+                    disabled={loading || semanticTextLayout !== 'semantic'}
+                  >
+                    <option value="1">true</option>
+                    <option value="0">false</option>
+                  </select>
+                </label>
+
+                <label className="tuning-field">
                   Text pipeline
                   <select
                     value={textPipeline}
-                    onChange={(e) => setTextPipeline(e.target.value as 'legacy' | 'v2')}
+                    onChange={(e) => setTextPipeline(e.target.value as 'legacy' | 'v2' | 'smart')}
                     disabled={loading}
                   >
-                    <option value="v2">v2</option>
+                    <option value="smart">smart (linguistic)</option>
+                    <option value="v2">v2 (geometric)</option>
                     <option value="legacy">legacy</option>
                   </select>
                 </label>
@@ -313,6 +698,55 @@ function App() {
                   <option value="auto">auto</option>
                   <option value="pdfium">pdfium</option>
                   <option value="unpdf">unpdf</option>
+                </select>
+              </label>
+
+              <label className="tuning-field">
+                Responsive
+                <select
+                  value={responsive ? '1' : '0'}
+                  onChange={(e) => setResponsive(e.target.value === '1')}
+                  disabled={loading}
+                >
+                  <option value="1">true</option>
+                  <option value="0">false</option>
+                </select>
+              </label>
+
+              <label className="tuning-field">
+                Font mapping
+                <select
+                  value={enableFontMapping ? '1' : '0'}
+                  onChange={(e) => setEnableFontMapping(e.target.value === '1')}
+                  disabled={loading}
+                >
+                  <option value="0">off</option>
+                  <option value="1">on</option>
+                </select>
+              </label>
+
+              <label className="tuning-field">
+                Text render mode
+                <select
+                  value={textRenderMode}
+                  onChange={(e) => setTextRenderMode(e.target.value as 'html' | 'svg')}
+                  disabled={loading}
+                >
+                  <option value="html">html</option>
+                  <option value="svg">svg (max fidelity)</option>
+                </select>
+              </label>
+
+              <label className="tuning-field">
+                Layout textLayout
+                <select
+                  value={layoutTextLayout}
+                  onChange={(e) => setLayoutTextLayout(e.target.value as 'absolute' | 'smart' | 'flow')}
+                  disabled={loading || outputMode !== 'layout'}
+                >
+                  <option value="absolute">absolute</option>
+                  <option value="smart">smart</option>
+                  <option value="flow">flow</option>
                 </select>
               </label>
 
@@ -417,6 +851,44 @@ function App() {
                 >
                   <option value="0">off</option>
                   <option value="1">on</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="tuning-row">
+              <label className="tuning-field">
+                CSS include fonts
+                <select
+                  value={cssIncludeFonts ? '1' : '0'}
+                  onChange={(e) => setCssIncludeFonts(e.target.value === '1')}
+                  disabled={loading}
+                >
+                  <option value="1">true</option>
+                  <option value="0">false</option>
+                </select>
+              </label>
+
+              <label className="tuning-field">
+                CSS include reset
+                <select
+                  value={cssIncludeReset ? '1' : '0'}
+                  onChange={(e) => setCssIncludeReset(e.target.value === '1')}
+                  disabled={loading}
+                >
+                  <option value="1">true</option>
+                  <option value="0">false</option>
+                </select>
+              </label>
+
+              <label className="tuning-field">
+                CSS include print
+                <select
+                  value={cssIncludePrint ? '1' : '0'}
+                  onChange={(e) => setCssIncludePrint(e.target.value === '1')}
+                  disabled={loading}
+                >
+                  <option value="1">true</option>
+                  <option value="0">false</option>
                 </select>
               </label>
             </div>

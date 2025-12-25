@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
 import { copyFileSync, mkdirSync, existsSync } from 'fs';
+import dts from 'vite-plugin-dts';
 
 export default defineConfig({
   build: {
@@ -30,6 +31,11 @@ export default defineConfig({
     format: 'es'
   },
   plugins: [
+    dts({
+      outDir: 'dist',
+      include: ['src/**/*'],
+      exclude: ['node_modules', 'dist', 'tests', 'demo']
+    }),
     {
       name: 'copy-models',
       writeBundle() {

@@ -34,6 +34,26 @@ export class LayoutEngine {
     return `${quoted}, Arial, Helvetica, sans-serif`;
   }
 
+  private getSvgFontStack(rawFamily: string): string {
+    const raw = String(rawFamily || '').trim();
+    if (!raw) return this.getCssFontStack('');
+
+    const generic = raw.toLowerCase();
+    const isGeneric =
+      generic === 'serif' ||
+      generic === 'sans-serif' ||
+      generic === 'sans' ||
+      generic === 'monospace' ||
+      generic === 'cursive' ||
+      generic === 'fantasy' ||
+      generic === 'system-ui';
+
+    if (isGeneric) return this.getCssFontStack(raw);
+
+    const quotedRaw = raw.includes(' ') ? `'${raw}'` : raw;
+    return `${quotedRaw}, ${this.getCssFontStack(raw)}`;
+  }
+
   resetCssCaches(): void {
     this.absVisualStyleClassByKey.clear();
     this.extraCssRules = [];
@@ -256,6 +276,9 @@ export class LayoutEngine {
     const styleParts: string[] = [];
     styleParts.push(`font-size: ${text.fontSize}px`);
     styleParts.push(`fill: ${text.color}`);
+    if (!fontClass || fontClass === 'font-default') {
+      styleParts.push(`font-family: ${this.getSvgFontStack(text.fontFamily)}`);
+    }
     if (text.fontWeight && text.fontWeight !== 400) styleParts.push(`font-weight: ${text.fontWeight}`);
     if (text.fontStyle && text.fontStyle !== 'normal') styleParts.push(`font-style: ${text.fontStyle}`);
     if (text.textDecoration && text.textDecoration !== 'none') styleParts.push(`text-decoration: ${text.textDecoration}`);

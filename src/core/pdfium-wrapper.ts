@@ -631,8 +631,23 @@ export class PDFiumWrapper {
                     : '';
 
                   const fontScale = fontScaleByFont.get(fontName || 'Unknown') ?? 1;
-                  const fontSize = Math.max(1, Math.round(Math.max(1, fontSizeRaw) * fontScale * 1000) / 1000);
-                  const fontSizeForTol = Number.isFinite(fontSizeRaw) && fontSizeRaw > 0 ? fontSizeRaw : fontSize;
+                  // Use hBox (height) as fontSize when fontSizeRaw is suspiciously low (<=2) but hBox is reasonable (>=4)
+                  // This handles corrupted PDFs where fontSize is 1px but height/width values are correct
+                  // Also use width as fallback for narrow characters when both fontSizeRaw and hBox are unreliable
+                  let effectiveFontSizeRaw = fontSizeRaw;
+                  if (fontSizeRaw <= 2) {
+                    if (hBox >= 4) {
+                      effectiveFontSizeRaw = hBox;
+                    } else if (w >= 3) {
+                      // For narrow glyphs, estimate font size from width (typical char is ~0.5-0.6 of font size)
+                      effectiveFontSizeRaw = w * 1.8;
+                    } else {
+                      // Fallback: use a reasonable minimum font size for text
+                      effectiveFontSizeRaw = 10;
+                    }
+                  }
+                  const fontSize = Math.max(1, Math.round(Math.max(1, effectiveFontSizeRaw) * fontScale * 1000) / 1000);
+                  const fontSizeForTol = Number.isFinite(effectiveFontSizeRaw) && effectiveFontSizeRaw > 0 ? effectiveFontSizeRaw : fontSize;
 
                   const h = Math.max(0, hBox);
 
@@ -814,12 +829,11 @@ export class PDFiumWrapper {
                       const isNextAlphaNum = /[\p{L}\p{N}]/u.test(ch);
                       const caseBoundary = /\p{Ll}$/u.test(prevChar) && /\p{Lu}/u.test(ch);
                       const inWordAlpha = /\p{L}$/u.test(prevChar) && /\p{L}/u.test(ch) && !caseBoundary;
-                      const caseBoundaryGap = Math.max(0.15, avgCharW * 0.08);
-                      // Splitting a run is very expensive semantically; only do it when we're confident the gap
-                      // indicates a real boundary (e.g., between words/numbers). In some PDFs, glyph boxes are
-                      // spaced such that intra-word kerning produces gaps larger than `adjacentTol`.
-                      const boundaryGap = Math.max(adjacentTol + 0.25, avgCharW * 0.75);
-                      const wordBoundaryGap = Math.max(boundaryGap * 1.6, avgCharW * 1.25, fontSize * 0.85);
+                      const caseBoundaryGap = Math.max(0.1, avgCharW * 0.05);
+                      // Splitting a run when we detect a word boundary. Lower thresholds to catch more word breaks.
+                      // Many PDFs have tight glyph spacing that still represents word boundaries.
+                      const boundaryGap = Math.max(adjacentTol + 0.15, avgCharW * 0.35);
+                      const wordBoundaryGap = Math.max(boundaryGap * 1.2, avgCharW * 0.55, fontSize * 0.25);
                       const canSplit =
                         currentTextLen >= 2 &&
                         isPrevAlphaNum &&
@@ -860,9 +874,9 @@ export class PDFiumWrapper {
                         const prevAlpha = /\p{L}/u.test(prevChar);
                         const nextAlpha = /\p{L}/u.test(ch);
                         const inWordAlpha = prevAlpha && nextAlpha && !caseBoundary;
-                        // If we're inside a word (letters on both sides), be extremely conservative.
-                        // Many PDFs have per-glyph spacing/kerning that looks like a small "gap".
-                        const minWordSpaceGap = Math.max(spaceGap * 3.0, avgCharW * 2.8, fontSize * 0.9);
+                        // Lower thresholds to catch more word boundaries.
+                        // Many PDFs have tight spacing that still represents word breaks.
+                        const minWordSpaceGap = Math.max(spaceGap * 1.5, avgCharW * 0.8, fontSize * 0.25);
                         if (
                           effectiveGap > spaceGap &&
                           (!inWordAlpha || effectiveGap > minWordSpaceGap) &&
@@ -927,7 +941,9 @@ export class PDFiumWrapper {
                       // PDFium often reports per-glyph boxes with larger-than-expected gaps for certain fonts.
                       // If both sides are alphabetic and there's no case boundary, treat this as an intra-word
                       // gap and *do not* insert a space or split into a new run.
-                      if (inWordAlpha) {
+                      // However, if the gap is significant (> 0.35 * avgCharW), it's likely a word boundary.
+                      const significantGap = effectiveGap > Math.max(avgCharW * 0.35, fontSize * 0.18);
+                      if (inWordAlpha && !significantGap) {
                         pending.__pendingSpace = false;
                         pending.__pendingSpaceXEnd = undefined;
                         current.text += ch;

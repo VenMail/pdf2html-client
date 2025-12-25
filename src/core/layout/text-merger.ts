@@ -50,21 +50,54 @@ export class ImprovedTextMerger {
   }
 
   private shouldMerge(run: TextRun, item: PDFTextContent): boolean {
-    if (run.fontFamily !== item.fontFamily) return false;
-    if (Math.abs(run.fontSize - item.fontSize) > 0.5) return false;
-    if (run.fontWeight !== item.fontWeight) return false;
-    if (run.fontStyle !== item.fontStyle) return false;
-    if (run.color !== item.color) return false;
-    const runDeco = run.textDecoration || 'none';
-    const itemDeco = item.textDecoration || 'none';
-    if (runDeco !== itemDeco) return false;
+    // Font family must match (normalize for comparison)
+    const runFont = (run.fontFamily || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const itemFont = (item.fontFamily || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (runFont !== itemFont) return false;
+    
+    // Check if this looks like fragmented text (short items, same font family)
+    const itemLen = (item.text || '').trim().length;
+    const runLen = (run.text || '').trim().length;
+    const isFragmented = itemLen <= 3 || runLen <= 5;
+    
+    // For fragmented text with same font family, be VERY aggressive about merging
+    // PDFium often reports wildly different font sizes for the same visual text
+    if (isFragmented) {
+      // Only check that font sizes are in a reasonable ratio (not 10x different)
+      const minSize = Math.min(run.fontSize, item.fontSize);
+      const maxSize = Math.max(run.fontSize, item.fontSize);
+      if (maxSize > minSize * 3) return false; // Only reject if 3x or more different
+    } else {
+      // For longer runs, use more conservative tolerance
+      const fontSizeTolerance = Math.max(run.fontSize, item.fontSize) * 0.5; // 50% tolerance
+      if (Math.abs(run.fontSize - item.fontSize) > fontSizeTolerance) return false;
+    }
+    
+    // Color check - be lenient for fragmented text
+    if (run.color !== item.color && !isFragmented) {
+      // For non-fragmented, colors must match
+      return false;
+    }
+    
+    // Rotation must be similar
     const runRot = typeof run.rotation === 'number' ? run.rotation : 0;
     const itemRot = typeof item.rotation === 'number' ? item.rotation : 0;
-    if (Math.abs(runRot - itemRot) > 0.01) return false;
-
+    if (Math.abs(runRot - itemRot) > 5) return false; // Allow 5 degree tolerance
+    
+    // Gap check - for fragmented text, be very aggressive
     const gap = item.x - (run.x + run.width);
-    const maxGap = (this.stats.gaps.p75WordGap || this.stats.gaps.medianWordGap || 3) * 2;
-    return gap < maxGap;
+    const avgFontSize = (run.fontSize + item.fontSize) / 2;
+    
+    if (isFragmented) {
+      // For fragmented text, allow gaps up to 2x the average font size
+      // This handles cases where PDFium reports incorrect widths
+      const maxGap = avgFontSize * 2;
+      return gap < maxGap;
+    } else {
+      // For normal text, use word gap statistics
+      const baseMaxGap = this.stats.gaps.p75WordGap || this.stats.gaps.medianWordGap || avgFontSize * 0.5;
+      return gap < baseMaxGap * 2;
+    }
   }
 
   private textContentToRun(item: PDFTextContent): TextRun {
@@ -79,6 +112,7 @@ export class ImprovedTextMerger {
       fontWeight: item.fontWeight,
       fontStyle: item.fontStyle,
       color: item.color,
+      fontInfo: item.fontInfo,
       textDecoration: item.textDecoration,
       rotation: item.rotation
     };
@@ -96,6 +130,7 @@ export class ImprovedTextMerger {
       fontWeight: run.fontWeight,
       fontStyle: run.fontStyle,
       color: run.color,
+      fontInfo: run.fontInfo,
       textDecoration: run.textDecoration,
       rotation: run.rotation
     };

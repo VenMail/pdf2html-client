@@ -66,6 +66,27 @@ export class PDF2HTML {
   ): Promise<HTMLOutput> {
     const startTime = Date.now();
 
+    // Set semantic mode flag for PDFParser to detect
+    const g = globalThis as unknown as { 
+      __PDF2HTML_SEMANTIC_MODE__?: boolean;
+      __PDF2HTML_CONFIG__?: {
+        htmlOptions?: {
+          preserveLayout?: boolean;
+          textLayout?: string;
+        };
+      };
+    };
+    
+    // Store the config for PDFParser to access
+    g.__PDF2HTML_CONFIG__ = {
+      htmlOptions: this.config.htmlOptions
+    };
+    
+    // Set semantic mode flag if conditions are met
+    const isSemanticMode = this.config.htmlOptions?.preserveLayout === true && 
+                          this.config.htmlOptions?.textLayout === 'semantic';
+    g.__PDF2HTML_SEMANTIC_MODE__ = isSemanticMode;
+
     this.reportProgress(progressCallback, {
       stage: 'parsing',
       progress: 0,
@@ -295,6 +316,12 @@ export class PDF2HTML {
     };
 
     const output = this.htmlGenerator.generate(document, fontMappings, metadata);
+
+    // Clean up global flags
+    if (g) {
+      delete g.__PDF2HTML_SEMANTIC_MODE__;
+      delete g.__PDF2HTML_CONFIG__;
+    }
 
     this.reportProgress(progressCallback, {
       stage: 'complete',
