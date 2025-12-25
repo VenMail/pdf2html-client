@@ -639,17 +639,25 @@ export class PDF2HTML {
         extractAnnotations: false
       });
       
+      // Validate document was parsed successfully
+      if (!document || !document.pages || document.pages.length === 0) {
+        return {
+          preset: 'web',
+          reason: 'Unable to analyze document structure - using default web configuration'
+        };
+      }
+      
       // Detect if this is a scanned PDF
-      const { ScannedPDFDetector } = await import('./core/scanned-pdf-detector.js');
+      const { ScannedPDFDetector } = await import('./core/scanned-pdf-detector');
       const detector = new ScannedPDFDetector();
       const scanAnalysis = detector.analyze(document);
       
       // Analyze document characteristics
       const pageCount = document.pageCount;
-      const totalImages = document.pages.reduce((sum, page) => sum + page.content.images.length, 0);
-      const totalText = document.pages.reduce((sum, page) => sum + page.content.text.length, 0);
+      const totalImages = document.pages.reduce((sum, page) => sum + (page.content?.images?.length || 0), 0);
+      const totalText = document.pages.reduce((sum, page) => sum + (page.content?.text?.length || 0), 0);
       const hasComplexLayout = document.pages.some(page => 
-        page.content.text.length > 50 && page.content.images.length > 0
+        (page.content?.text?.length || 0) > 50 && (page.content?.images?.length || 0) > 0
       );
       
       // Decision logic
@@ -685,6 +693,12 @@ export class PDF2HTML {
       return {
         preset: 'web',
         reason: 'General document - web-optimized mode provides best balance'
+      };
+    } catch (error) {
+      // If analysis fails, return safe default
+      return {
+        preset: 'web',
+        reason: 'Analysis failed - using default web configuration for compatibility'
       };
     } finally {
       // Always dispose parser, even if an error occurs
